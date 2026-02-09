@@ -20,16 +20,12 @@ import {
   StandardMaterial, 
   WebXRFeatureName,
   Texture,
-  AbstractMesh,
-  WebXRPlaneDetector
+  AbstractMesh
 } from '@babylonjs/core';
 import '@babylonjs/loaders'; 
 
-// --- 1. FIX PER EVITARE CRASH SU REACT NATIVE ---
-// Definiamo navigator per TypeScript
+// --- FIX ANTI-CRASH PER BABYLON ---
 declare const navigator: any;
-
-// Creiamo un "finto" browser environment perché Babylon native lo cerca all'avvio
 if (!navigator.mediaDevices) {
   navigator.mediaDevices = {};
 }
@@ -37,104 +33,91 @@ if (!navigator.mediaDevices.getUserMedia) {
   navigator.mediaDevices.getUserMedia = () => Promise.resolve({});
 }
 
-// Ignoriamo i warning non critici della UI
-LogBox.ignoreLogs(['SafeAreaView has been deprecated']);
-
+// Nascondiamo i warning della UI
+LogBox.ignoreLogs(['SafeAreaView']);
 
 const App = () => {
   const engine = useEngine();
   const [cameraActive, setCameraActive] = useState(false);
-  const [modelMesh, setModelMesh] = useState<AbstractMesh | null>(null);
   const [permissionGranted, setPermissionGranted] = useState(false);
-  const [statusText, setStatusText] = useState("Inizializzazione...");
+  const [status, setStatus] = useState("Richiesta permessi...");
+  const [cubeMesh, setCubeMesh] = useState<AbstractMesh | null>(null);
 
-  // --- 2. GESTIONE PERMESSI ANDROID ---
+  // 1. GESTIONE PERMESSI (Android)
   useEffect(() => {
-    const checkPerms = async () => {
+    const getPerms = async () => {
       if (Platform.OS === 'android') {
         const granted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.CAMERA
         );
-        setPermissionGranted(granted === PermissionsAndroid.RESULTS.GRANTED);
+        if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+            setPermissionGranted(true);
+            setStatus("Avvio Motore 3D...");
+        } else {
+            setStatus("Permesso negato! Impossibile usare AR.");
+        }
       } else {
-        setPermissionGranted(true); // iOS gestisce i permessi via Info.plist
+        setPermissionGranted(true);
       }
     };
-    checkPerms();
+    getPerms();
   }, []);
 
-  // --- 3. INIZIALIZZAZIONE MOTORE 3D E AR ---
+  // 2. LOGICA 3D E AR
   useEffect(() => {
     if (engine && permissionGranted) {
       const scene = new Scene(engine);
 
-      // A. Camera & Luce (Necessari per vedere qualcosa)
+      // Camera e Luce (Base)
       const camera = new FreeCamera('camera1', new Vector3(0, 5, -10), scene);
       camera.setTarget(Vector3.Zero());
       const light = new HemisphericLight('light1', new Vector3(0, 1, 0), scene);
       light.intensity = 1.0;
 
-      // B. Creazione Modello (Inizialmente nascosto)
-      // Usiamo un cubo per il test, ma qui potresti usare SceneLoader.ImportMesh per un GLB
+      // Oggetto Cubo (Invisibile all'inizio)
       const box = MeshBuilder.CreateBox("box", { size: 0.2 }, scene);
       box.isVisible = false; 
       
-      // Materiale Iniziale (Rosso)
-      const material = new StandardMaterial("boxMat", scene);
-      material.diffuseColor = Color3.Red();
-      box.material = material;
-      
-      setModelMesh(box);
+      const mat = new StandardMaterial("mat", scene);
+      mat.diffuseColor = Color3.Red();
+      box.material = mat;
+      setCubeMesh(box);
 
-      // C. Setup AR (ARCore / ARKit)
+      // AVVIO SESSIONE AR
       const initAR = async () => {
         try {
-          setStatusText("Avvio AR in corso...");
-          
           const xr = await scene.createDefaultXRExperienceAsync({
             uiOptions: { sessionMode: 'immersive-ar' },
-            optionalFeatures: true, // Richiede features extra come HitTest
+            optionalFeatures: true,
           });
 
           const fm = xr.baseExperience.featuresManager;
 
-          // FEATURE: Rilevamento Superfici (Plane Detection)
-          // Questo farà apparire dei poligoni sulle superfici rilevate
+          // A. Plane Detection (Visualizza i piani)
           try {
-            const planes = fm.enableFeature(WebXRFeatureName.PLANE_DETECTION, "latest");
-            // Opzionale: puoi nascondere i piani se vuoi solo l'hit test, ma per debug è utile vederli
-          } catch (e) {
-            console.log("Plane detection non supportata");
-          }
+            fm.enableFeature(WebXRFeatureName.PLANE_DETECTION, "latest");
+          } catch (e) { console.log("Plane detection non disponibile"); }
 
-          // FEATURE: Hit Test (Posizionamento al Click)
+          // B. Hit Test (Rileva tocco su superfici)
           const hitTest = fm.enableFeature(WebXRFeatureName.HIT_TEST, "latest");
 
-          // Quando la sessione AR è pronta e attiva
+          // Quando l'AR è pronta
           xr.baseExperience.sessionManager.onXRSessionInit.add(() => {
             setCameraActive(true);
-            setStatusText("Inquadra il pavimento e tocca per piazzare");
+            setStatus("Inquadra il pavimento e tocca!");
           });
 
-          // D. Logica di Posizionamento (Click)
+          // C. Gestione Tocco (Piazzamento)
           scene.onPointerDown = (evt, pickInfo) => {
             if (pickInfo.hit && pickInfo.pickedPoint) {
-                // Sposta il cubo dove abbiamo cliccato
-                box.position.copyFrom(pickInfo.pickedPoint);
-                
-                // Ruota il cubo se necessario (opzionale)
-                // box.rotationQuaternion = ... 
-
-                // Rendilo visibile
-                box.isVisible = true;
-                
-                setStatusText("Oggetto piazzato!");
+              box.position.copyFrom(pickInfo.pickedPoint);
+              box.isVisible = true;
+              setStatus("Oggetto piazzato!");
             }
           };
 
         } catch (e) {
-          console.error("Errore critico AR:", e);
-          setStatusText("Errore avvio AR: " + e);
+          setStatus("Errore AR (Manca ARCore?): " + e);
         }
       };
 
@@ -142,45 +125,31 @@ const App = () => {
     }
   }, [engine, permissionGranted]);
 
-  // --- 4. FUNZIONE CAMBIO TEXTURE (Virtual Environment) ---
+  // 3. CAMBIO TEXTURE
   const changeTexture = () => {
-    if (modelMesh && modelMesh.material) {
-        const mat = modelMesh.material as StandardMaterial;
-        
-        // Carica una texture da URL (Esempio: Pavimento di legno)
-        // Nota: Assicurati di avere internet sul telefono
-        const urlTexture = "https://www.babylonjs-playground.com/textures/wood.jpg";
-        
-        const newTexture = new Texture(urlTexture, modelMesh.getScene());
-        
-        // Applica la texture
-        mat.diffuseTexture = newTexture;
-        
-        // Resetta il colore a bianco per non alterare la texture
-        mat.diffuseColor = new Color3(1, 1, 1);
-        
-        setStatusText("Texture modificata: Legno");
+    if (cubeMesh && cubeMesh.material) {
+        const mat = cubeMesh.material as StandardMaterial;
+        // Carica texture legno
+        const tex = new Texture("https://www.babylonjs-playground.com/textures/wood.jpg", cubeMesh.getScene());
+        mat.diffuseTexture = tex;
+        mat.diffuseColor = Color3.White(); 
+        setStatus("Texture cambiata: Legno");
     }
   };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: 'black' }}>
       <View style={{ flex: 1 }}>
-        {/* VIEW 3D: Questa è la finestra su ARKit/ARCore */}
         <EngineView camera={undefined} displayFrameRate={true} />
         
-        {/* UI OVERLAY: I controlli React Native */}
-        <View style={styles.uiContainer}>
-            <Text style={styles.statusText}>{statusText}</Text>
-            
-            <View style={styles.buttonContainer}>
-              <Button 
+        <View style={styles.overlay}>
+            <Text style={styles.text}>{status}</Text>
+            <Button 
                 title="Cambia Texture" 
                 onPress={changeTexture} 
+                disabled={!cameraActive}
                 color="#841584"
-                disabled={!cameraActive} // Attivo solo quando l'AR è partita
-              />
-            </View>
+            />
         </View>
       </View>
     </SafeAreaView>
@@ -188,29 +157,22 @@ const App = () => {
 };
 
 const styles = StyleSheet.create({
-  uiContainer: {
+  overlay: {
     position: 'absolute',
-    bottom: 30,
+    bottom: 50,
     left: 20,
     right: 20,
-    alignItems: 'center',
-  }, 
-  statusText: {
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center'
+  },
+  text: {
     color: 'white',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     padding: 10,
     borderRadius: 8,
-    marginBottom: 15,
+    marginBottom: 20,
     fontSize: 16,
-    textAlign: 'center'
-  },
-  buttonContainer: {
-    width: '100%',
-    backgroundColor: 'white',
-    borderRadius: 10,
-    padding: 5,
-    elevation: 5
-  } 
-}); 
+    fontWeight: 'bold'
+  }
+});
 
 export default App;
