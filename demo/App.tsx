@@ -8,6 +8,7 @@ import {
   Platform,
   ScrollView,
   Alert,
+  Switch,
 } from 'react-native';
 import {EngineView, useEngine} from '@babylonjs/react-native';
 import {
@@ -21,20 +22,17 @@ import {
   DirectionalLight,
   MeshBuilder,
   StandardMaterial,
-  Texture,
   TransformNode,
   WebXRSessionManager,
   WebXRTrackingState,
-  WebXRFeatureName,
-  WebXRHitTest,
-  WebXRPlaneDetector,
   AbstractMesh,
   PointerEventTypes,
+  Mesh,
 } from '@babylonjs/core';
 import '@babylonjs/loaders';
 
 // ================= LOGGER =================
-const LOG_MAX = 50;
+const LOG_MAX = 60;
 type LogEntry = {time: string; level: 'INFO' | 'WARN' | 'ERROR'; msg: string};
 const logBuffer: LogEntry[] = [];
 
@@ -57,16 +55,16 @@ function log(level: LogEntry['level'], msg: string) {
   else console.log(prefix, msg);
 }
 
-// ================= TEXTURES =================
+// ================= TEXTURE PRESETS =================
 const TEXTURE_PRESETS: {name: string; color: Color3; alpha: number}[] = [
   {name: 'Rosso', color: new Color3(1, 0, 0), alpha: 1},
   {name: 'Blu', color: new Color3(0, 0.3, 1), alpha: 1},
   {name: 'Verde', color: new Color3(0, 0.8, 0.2), alpha: 1},
-  {name: 'Oro', color: new Color3(1, 0.84, 0), alpha: 1},
-  {name: 'Trasparente', color: new Color3(0.5, 0.5, 1), alpha: 0.4},
-  {name: 'Legno', color: new Color3(0.55, 0.35, 0.17), alpha: 1},
-  {name: 'Metallo', color: new Color3(0.75, 0.75, 0.78), alpha: 1},
 ];
+
+// ================= CONSTANTS =================
+const CUBE_SIZE = 0.12;
+const SELECTION_EMISSIVE = new Color3(0.3, 0.6, 1);
 
 // ================= APP =================
 const App = () => {
@@ -77,21 +75,104 @@ const App = () => {
   const [xrSession, setXrSession] = useState<WebXRSessionManager>();
   const [trackingState, setTrackingState] = useState<WebXRTrackingState>();
   const [status, setStatus] = useState('Inizializzazione motore 3D...');
-  const [planesDetected, setPlanesDetected] = useState(0);
-  const [showDebug, setShowDebug] = useState(false);
-  const [debugLogs, setDebugLogs] = useState<LogEntry[]>([]);
+  const [surfaceDetected, setSurfaceDetected] = useState(false);
   const [selectedTexture, setSelectedTexture] = useState(0);
   const [objectsPlaced, setObjectsPlaced] = useState(0);
   const [sceneReady, setSceneReady] = useState(false);
+  const [selectedCube, setSelectedCube] = useState<AbstractMesh | null>(null);
+  const [showManipulator, setShowManipulator] = useState(false);
+  const [interactionMode, setInteractionMode] = useState<'CREAZIONE' | 'SELEZIONE'>('CREAZIONE');
+  const [manipProperty, setManipProperty] = useState<string | null>(null);
+  const [, forceRender] = useState(0);
 
-  const objectsRef = useRef<AbstractMesh[]>([]);
+  const cubesRef = useRef<AbstractMesh[]>([]);
   const xrRef = useRef<any>(null);
-  const planeCountRef = useRef(0);
+  const selectedCubeRef = useRef<AbstractMesh | null>(null);
+  const lastHitPosRef = useRef<Vector3 | null>(null);
+  const sceneRef = useRef<Scene | null>(null);
+  const rootNodeRef = useRef<TransformNode | null>(null);
+  const selectedTextureRef = useRef(0);
+  const trackingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTrackingRef = useRef<WebXRTrackingState | null>(null);
+  const surfaceDetectedRef = useRef(false);
+  const interactionModeRef = useRef<'CREAZIONE' | 'SELEZIONE'>('CREAZIONE');
+  const hitTestMarkerRef = useRef<Mesh | null>(null);
+  const groundPlaneRef = useRef<Mesh | null>(null);
+  const groundYRef = useRef(-1.3);
 
-  // Refresh debug logs
-  const refreshLogs = useCallback(() => {
-    setDebugLogs([...logBuffer]);
+  // ========== MANIPULATE CUBE: +/- step ==========
+  const manipStep = useCallback((prop: string, direction: 1 | -1) => {
+    const cube = selectedCubeRef.current;
+    if (!cube) return;
+    if (prop === 'scala') {
+      const cur = cube.scaling.x;
+      const next = Math.min(5, Math.max(0.1, cur + direction * 0.1)); // ±0.1 step, clamp 0.1-5
+      cube.scaling = new Vector3(next, next, next);
+      log('INFO', `Scala: ${(next * 100).toFixed(0)}%`);
+    } else if (prop === 'rotX') {
+      cube.rotation.x += direction * (15 * Math.PI / 180); // ±15°
+      log('INFO', `Rot X: ${((cube.rotation.x * 180) / Math.PI).toFixed(0)}°`);
+    } else if (prop === 'rotY') {
+      cube.rotation.y += direction * (15 * Math.PI / 180); // ±15°
+      log('INFO', `Rot Y: ${((cube.rotation.y * 180) / Math.PI).toFixed(0)}°`);
+    }
+    forceRender(n => n + 1);
   }, []);
+
+  // ========== SELECT / DESELECT CUBE ==========
+  const selectCube = useCallback((mesh: AbstractMesh | null) => {
+    if (selectedCubeRef.current) {
+      const prevMat = selectedCubeRef.current.material as StandardMaterial | null;
+      if (prevMat) {
+        prevMat.emissiveColor = Color3.Black();
+      }
+      log('INFO', `Deselezionato: ${selectedCubeRef.current.name}`);
+    }
+    selectedCubeRef.current = mesh;
+    setSelectedCube(mesh);
+    if (mesh) {
+      const mat = mesh.material as StandardMaterial | null;
+      if (mat) {
+        mat.emissiveColor = SELECTION_EMISSIVE.clone();
+      }
+      setShowManipulator(true);
+      log('INFO', `Selezionato: ${mesh.name}`);
+    } else {
+      setShowManipulator(false);
+      setManipProperty(null);
+    }
+  }, []);
+
+  // ========== PLACE CUBE AT POSITION ==========
+  const placeCubeAt = useCallback(
+    (position: Vector3, scn: Scene, _root: TransformNode) => {
+      const objName = `cube_${Date.now()}`;
+      const newCube = MeshBuilder.CreateBox(objName, {size: CUBE_SIZE}, scn);
+      newCube.position = position.clone();
+      newCube.position.y += CUBE_SIZE / 2;
+      // NO parent — cubes stay in world coordinates so they remain visible in AR
+      newCube.isPickable = true;
+
+      const mat = new StandardMaterial(`${objName}_mat`, scn);
+      const texIdx = selectedTextureRef.current;
+      mat.diffuseColor = TEXTURE_PRESETS[texIdx].color.clone();
+      mat.alpha = TEXTURE_PRESETS[texIdx].alpha;
+      mat.specularColor = new Color3(0.4, 0.4, 0.4);
+      mat.emissiveColor = Color3.Black();
+      newCube.material = mat;
+
+      cubesRef.current.push(newCube);
+      setObjectsPlaced(prev => prev + 1);
+      selectCube(newCube);
+
+      log(
+        'INFO',
+        `Cubo piazzato: "${objName}" a (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)}) texture=${TEXTURE_PRESETS[texIdx].name}`,
+      );
+      setStatus('Cubo piazzato! Toccalo per selezionarlo.');
+    },
+    [selectCube],
+  );
 
   // ========== STEP 1: Initialize Scene ==========
   useEffect(() => {
@@ -101,13 +182,12 @@ const App = () => {
     }
 
     log('INFO', `Motore BabylonJS inizializzato. Platform: ${Platform.OS}`);
-    log('INFO', `Engine version: ${engine.description || 'ReactNativeEngine'}`);
 
     try {
       const newScene = new Scene(engine);
-      newScene.clearColor = new Color4(0.2, 0.2, 0.3, 1);
+      newScene.clearColor = new Color4(0.15, 0.15, 0.2, 1);
+      sceneRef.current = newScene;
 
-      // Camera: ArcRotateCamera (necessaria per BabylonJS React Native)
       const cam = new ArcRotateCamera(
         'mainCamera',
         -Math.PI / 2,
@@ -122,176 +202,105 @@ const App = () => {
       setCamera(cam);
       log('INFO', 'Camera ArcRotateCamera creata');
 
-      // Luci
-      const hemiLight = new HemisphericLight(
-        'hemiLight',
-        new Vector3(0, 1, 0),
-        newScene,
-      );
+      const hemiLight = new HemisphericLight('hemiLight', new Vector3(0, 1, 0), newScene);
       hemiLight.intensity = 0.7;
 
-      const dirLight = new DirectionalLight(
-        'dirLight',
-        new Vector3(-1, -2, -1),
-        newScene,
-      );
+      const dirLight = new DirectionalLight('dirLight', new Vector3(-1, -2, -1), newScene);
       dirLight.intensity = 0.5;
       log('INFO', 'Luci aggiunte alla scena');
 
-      // Root container per tutti gli oggetti AR
       const root = new TransformNode('ARRoot', newScene);
       setRootNode(root);
+      rootNodeRef.current = root;
 
-      // Cubo demo iniziale
-      const demoBox = MeshBuilder.CreateBox(
-        'demoBox',
-        {size: 0.15},
-        newScene,
-      );
-      demoBox.position = new Vector3(0, 0, 0);
+      // Demo cube
+      const demoBox = MeshBuilder.CreateBox('cube_demo', {size: CUBE_SIZE}, newScene);
+      demoBox.position = new Vector3(0, 0, 0.5);
       demoBox.parent = root;
-      const demoMat = new StandardMaterial('demoBoxMat', newScene);
+      const demoMat = new StandardMaterial('cube_demo_mat', newScene);
       demoMat.diffuseColor = TEXTURE_PRESETS[0].color.clone();
       demoMat.specularColor = new Color3(0.3, 0.3, 0.3);
+      demoMat.emissiveColor = Color3.Black();
       demoBox.material = demoMat;
-      objectsRef.current.push(demoBox);
-      log('INFO', 'Cubo demo creato (rosso, 15cm)');
+      demoBox.isPickable = true;
+      cubesRef.current.push(demoBox);
+      log('INFO', `Cubo demo creato (${CUBE_SIZE * 100}cm, rosso)`);
 
-      // Sfera demo
-      const demoSphere = MeshBuilder.CreateSphere(
-        'demoSphere',
-        {diameter: 0.1, segments: 16},
+      // Hit-test reticle — a visible torus (ring) lying flat on the ground
+      const reticle = MeshBuilder.CreateTorus(
+        'hitTestMarker',
+        {diameter: 0.20, thickness: 0.015, tessellation: 32},
         newScene,
       );
-      demoSphere.position = new Vector3(0.25, 0, 0);
-      demoSphere.parent = root;
-      const sphereMat = new StandardMaterial('demoSphereMat', newScene);
-      sphereMat.diffuseColor = TEXTURE_PRESETS[1].color.clone();
-      sphereMat.specularColor = new Color3(0.5, 0.5, 0.5);
-      demoSphere.material = sphereMat;
-      objectsRef.current.push(demoSphere);
-      log('INFO', 'Sfera demo creata (blu, 10cm)');
+      reticle.rotation.x = 0; // torus is already flat
+      const reticleMat = new StandardMaterial('hitTestMarkerMat', newScene);
+      reticleMat.diffuseColor = new Color3(0, 1, 0);
+      reticleMat.emissiveColor = new Color3(0, 1, 0);
+      reticleMat.alpha = 0.9;
+      reticleMat.backFaceCulling = false;
+      reticle.material = reticleMat;
+      reticle.isVisible = false;
+      reticle.isPickable = false;
+      hitTestMarkerRef.current = reticle;
 
-      // Cilindro demo
-      const demoCylinder = MeshBuilder.CreateCylinder(
-        'demoCylinder',
-        {height: 0.15, diameter: 0.08, tessellation: 16},
-        newScene,
-      );
-      demoCylinder.position = new Vector3(-0.25, 0, 0);
-      demoCylinder.parent = root;
-      const cylMat = new StandardMaterial('demoCylMat', newScene);
-      cylMat.diffuseColor = TEXTURE_PRESETS[2].color.clone();
-      cylMat.specularColor = new Color3(0.3, 0.3, 0.3);
-      demoCylinder.material = cylMat;
-      objectsRef.current.push(demoCylinder);
-      log('INFO', 'Cilindro demo creato (verde, 15cm)');
-
-      // Pointer observable per piazzare oggetti con il tap
+      // ========== POINTER / TAP HANDLER ==========
       newScene.onPointerObservable.add(evtData => {
-        if (evtData.type === PointerEventTypes.POINTERTAP) {
-          log(
-            'INFO',
-            `Tap rilevato a (${evtData.event.offsetX?.toFixed(0)}, ${evtData.event.offsetY?.toFixed(0)})`,
-          );
+        if (evtData.type !== PointerEventTypes.POINTERTAP) return;
 
-          // Calcola la posizione nel mondo 3D usando il pick
-          const pickResult = newScene.pick(
-            evtData.event.offsetX || 0,
-            evtData.event.offsetY || 0,
-          );
+        const mode = interactionModeRef.current;
 
-          if (pickResult?.hit && pickResult.pickedPoint) {
-            log(
-              'INFO',
-              `Pick hit: ${pickResult.pickedMesh?.name} a pos (${pickResult.pickedPoint.x.toFixed(2)}, ${pickResult.pickedPoint.y.toFixed(2)}, ${pickResult.pickedPoint.z.toFixed(2)})`,
-            );
+        // Try scene.pick first (works in non-AR mode)
+        const px = evtData.event.offsetX || 0;
+        const py = evtData.event.offsetY || 0;
+        const pickResult = newScene.pick(px, py, (mesh) => mesh.name.startsWith('cube_'));
+        if (pickResult?.hit && pickResult.pickedMesh) {
+          log('INFO', `Tap su cubo (pick): ${pickResult.pickedMesh.name} (modo: ${mode})`);
+          selectCube(pickResult.pickedMesh);
+          return;
+        }
 
-            // Crea nuovo oggetto alla posizione del tap
-            const shapes = ['box', 'sphere', 'cylinder', 'torus'];
-            const shapeIndex =
-              objectsRef.current.length % shapes.length;
-            const shapeName = shapes[shapeIndex];
-            const objName = `placed_${shapeName}_${Date.now()}`;
-
-            let newMesh: AbstractMesh;
-            switch (shapeName) {
-              case 'sphere':
-                newMesh = MeshBuilder.CreateSphere(
-                  objName,
-                  {diameter: 0.08, segments: 16},
-                  newScene,
-                );
-                break;
-              case 'cylinder':
-                newMesh = MeshBuilder.CreateCylinder(
-                  objName,
-                  {height: 0.12, diameter: 0.06, tessellation: 16},
-                  newScene,
-                );
-                break;
-              case 'torus':
-                newMesh = MeshBuilder.CreateTorus(
-                  objName,
-                  {diameter: 0.08, thickness: 0.02, tessellation: 16},
-                  newScene,
-                );
-                break;
-              default:
-                newMesh = MeshBuilder.CreateBox(
-                  objName,
-                  {size: 0.06},
-                  newScene,
-                );
-            }
-
-            newMesh.position = pickResult.pickedPoint.clone();
-            newMesh.parent = root;
-            const newMat = new StandardMaterial(`${objName}_mat`, newScene);
-            const texIdx =
-              objectsRef.current.length % TEXTURE_PRESETS.length;
-            newMat.diffuseColor = TEXTURE_PRESETS[texIdx].color.clone();
-            newMat.alpha = TEXTURE_PRESETS[texIdx].alpha;
-            newMat.specularColor = new Color3(0.4, 0.4, 0.4);
-            newMesh.material = newMat;
-            objectsRef.current.push(newMesh);
-            setObjectsPlaced(prev => prev + 1);
-            log(
-              'INFO',
-              `Nuovo ${shapeName} piazzato: "${objName}" con texture ${TEXTURE_PRESETS[texIdx].name}`,
-            );
-          } else {
-            // Se non colpisci niente, piazza davanti alla camera
-            if (newScene.activeCamera) {
-              const ray = newScene.activeCamera.getForwardRay(0.5);
-              const pos = ray.origin.add(
-                ray.direction.scale(ray.length),
-              );
-              const objName = `placed_front_${Date.now()}`;
-              const newMesh = MeshBuilder.CreateBox(
-                objName,
-                {size: 0.06},
-                newScene,
-              );
-              newMesh.position = pos;
-              newMesh.parent = root;
-              const newMat = new StandardMaterial(
-                `${objName}_mat`,
-                newScene,
-              );
-              const texIdx =
-                objectsRef.current.length % TEXTURE_PRESETS.length;
-              newMat.diffuseColor = TEXTURE_PRESETS[texIdx].color.clone();
-              newMat.alpha = TEXTURE_PRESETS[texIdx].alpha;
-              newMesh.material = newMat;
-              objectsRef.current.push(newMesh);
-              setObjectsPlaced(prev => prev + 1);
-              log(
-                'INFO',
-                `Oggetto piazzato davanti alla camera: "${objName}"`,
-              );
+        // In AR, scene.pick often fails. Use proximity check near reticle/camera ray.
+        if (xrRef.current && lastHitPosRef.current) {
+          const hitPos = lastHitPosRef.current;
+          const SELECT_RADIUS = 0.35; // meters — generous for 12cm cubes
+          let closestCube: AbstractMesh | null = null;
+          let closestDist = SELECT_RADIUS;
+          for (const cube of cubesRef.current) {
+            if (!cube.isVisible || cube.name === 'cube_demo') continue;
+            const dx = cube.position.x - hitPos.x;
+            const dz = cube.position.z - hitPos.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist < closestDist) {
+              closestDist = dist;
+              closestCube = cube;
             }
           }
+          if (closestCube) {
+            log('INFO', `Tap su cubo (proximity ${closestDist.toFixed(2)}m): ${closestCube.name} (modo: ${mode})`);
+            selectCube(closestCube);
+            return;
+          }
+        }
+
+        // No cube tapped
+        log('INFO', `Tap su vuoto (modo: ${mode})`);
+
+        // In SELEZIONE mode, deselect on empty tap
+        if (mode === 'SELEZIONE') {
+          selectCube(null);
+          return;
+        }
+
+        // CREAZIONE mode: Place cube at reticle position ONLY
+        if (lastHitPosRef.current && xrRef.current && surfaceDetectedRef.current) {
+          const pos = lastHitPosRef.current.clone();
+          log('INFO', `Piazzamento cubo a reticle: (${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)})`);
+          placeCubeAt(pos, newScene, rootNodeRef.current!);
+        } else if (!xrRef.current) {
+          // Non-AR tap: deselect
+          selectCube(null);
+        } else {
+          setStatus('Inquadra il pavimento per piazzare un cubo');
         }
       });
       log('INFO', 'Pointer/Tap listener registrato');
@@ -299,12 +308,12 @@ const App = () => {
       setScene(newScene);
       setSceneReady(true);
       setStatus('Scena 3D pronta. Premi "Avvia AR" per iniziare.');
-      log('INFO', '✅ Scena 3D completamente inizializzata');
+      log('INFO', '\u2705 Scena 3D completamente inizializzata');
     } catch (error: any) {
       log('ERROR', `Errore inizializzazione scena: ${error.message}`);
       setStatus(`Errore: ${error.message}`);
     }
-  }, [engine]);
+  }, [engine, selectCube, placeCubeAt]);
 
   // ========== STEP 2: Toggle AR ==========
   const toggleAR = useCallback(async () => {
@@ -315,172 +324,157 @@ const App = () => {
 
     try {
       if (xrSession) {
-        // ---- EXIT AR ----
         log('INFO', 'Uscita dalla sessione AR...');
         setStatus('Chiusura AR...');
+
+        if (hitTestMarkerRef.current) {
+          hitTestMarkerRef.current.isVisible = false;
+        }
+        if (groundPlaneRef.current) {
+          groundPlaneRef.current.dispose();
+          groundPlaneRef.current = null;
+        }
+        lastHitPosRef.current = null;
+        lastTrackingRef.current = null;
+        setSurfaceDetected(false);
+        surfaceDetectedRef.current = false;
+        if (trackingTimerRef.current) {
+          clearTimeout(trackingTimerRef.current);
+          trackingTimerRef.current = null;
+        }
+
         await xrSession.exitXRAsync();
-        log('INFO', '✅ Sessione AR terminata');
+        log('INFO', '\u2705 Sessione AR terminata');
         setStatus('AR disattivata. Premi "Avvia AR" per riavviare.');
+
+        // Show demo cube again
+        cubesRef.current.forEach(cube => {
+          if (cube.name === 'cube_demo') {
+            cube.isVisible = true;
+          }
+        });
       } else {
-        // ---- ENTER AR ----
         log('INFO', '--- AVVIO AR ---');
         setStatus('Avvio AR in corso...');
 
-        // Step 2a: Crea XR experience
         log('INFO', 'Creazione XR Experience...');
         const xr = await scene.createDefaultXRExperienceAsync({
           disableDefaultUI: true,
           disableTeleportation: true,
         });
         xrRef.current = xr;
-        log('INFO', '✅ XR Experience creata');
+        log('INFO', '\u2705 XR Experience creata');
 
-        // Step 2b: Abilita features AR prima di entrare nella sessione
-        const fm = xr.baseExperience.featuresManager;
-
-        // --- PLANE DETECTION (ARCore/ARKit) ---
-        try {
-          const planeDetector = fm.enableFeature(
-            WebXRFeatureName.PLANE_DETECTION,
-            'latest',
-          ) as WebXRPlaneDetector;
-          log('INFO', '✅ Plane Detection abilitato');
-
-          if (planeDetector && planeDetector.onPlaneAddedObservable) {
-            planeDetector.onPlaneAddedObservable.add(plane => {
-              planeCountRef.current++;
-              setPlanesDetected(planeCountRef.current);
-              log(
-                'INFO',
-                `Piano rilevato #${planeCountRef.current}: classificazione=${
-                  (plane as any).xrPlane?.orientation || 'N/A'
-                }`,
-              );
-
-              // Visualizza il piano rilevato con un marker semi-trasparente
-              try {
-                const planeMesh = MeshBuilder.CreatePlane(
-                  `plane_${planeCountRef.current}`,
-                  {size: 0.5},
-                  scene,
-                );
-                planeMesh.position = plane.polygonDefinition
-                  ? Vector3.Zero()
-                  : Vector3.Zero();
-                const planeMat = new StandardMaterial(
-                  `planeMat_${planeCountRef.current}`,
-                  scene,
-                );
-                planeMat.diffuseColor = new Color3(0, 1, 0.5);
-                planeMat.alpha = 0.15;
-                planeMat.backFaceCulling = false;
-                planeMesh.material = planeMat;
-                planeMesh.parent = rootNode;
-                log(
-                  'INFO',
-                  `Marker piano #${planeCountRef.current} aggiunto alla scena`,
-                );
-              } catch (planeErr: any) {
-                log(
-                  'WARN',
-                  `Impossibile creare marker piano: ${planeErr.message}`,
-                );
-              }
-            });
-
-            planeDetector.onPlaneUpdatedObservable?.add(plane => {
-              log(
-                'INFO',
-                `Piano aggiornato: bounds cambiati`,
-              );
-            });
-
-            planeDetector.onPlaneRemovedObservable?.add(plane => {
-              planeCountRef.current = Math.max(0, planeCountRef.current - 1);
-              setPlanesDetected(planeCountRef.current);
-              log('INFO', 'Piano rimosso');
-            });
-          }
-        } catch (planeErr: any) {
-          log('WARN', `Plane Detection non disponibile: ${planeErr.message}`);
-        }
-
-        // --- HIT TEST ---
-        try {
-          const hitTest = fm.enableFeature(
-            WebXRFeatureName.HIT_TEST,
-            'latest',
-          ) as WebXRHitTest;
-          log('INFO', '✅ Hit Test abilitato');
-
-          if (hitTest && hitTest.onHitTestResultObservable) {
-            hitTest.onHitTestResultObservable.add(results => {
-              if (results.length > 0) {
-                // Primo risultato disponibile - logga periodicamente
-                const pos = results[0].position;
-                if (pos && Math.random() < 0.02) {
-                  log(
-                    'INFO',
-                    `HitTest: superficie rilevata a (${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)})`,
-                  );
-                }
-              }
-            });
-          }
-        } catch (hitErr: any) {
-          log('WARN', `Hit Test non disponibile: ${hitErr.message}`);
-        }
-
-        // Step 2c: Entra nella sessione AR
         log('INFO', "Chiamata enterXRAsync('immersive-ar', 'unbounded')...");
         const session = await xr.baseExperience.enterXRAsync(
           'immersive-ar',
           'unbounded',
           xr.renderTarget,
         );
-        log('INFO', '✅ Sessione AR avviata con successo!');
+        log('INFO', '\u2705 Sessione AR avviata con successo!');
+
+        // ====== GROUND PLANE (visible grid so user sees where the floor is) ======
+        const GROUND_Y = groundYRef.current;
+        const ground = MeshBuilder.CreateGround(
+          'virtualGround',
+          {width: 20, height: 20, subdivisions: 40},
+          scene,
+        );
+        ground.position.y = GROUND_Y;
+        const groundMat = new StandardMaterial('groundMat', scene);
+        groundMat.diffuseColor = new Color3(0, 0.6, 0.6);
+        groundMat.emissiveColor = new Color3(0, 0.15, 0.15);
+        groundMat.alpha = 0.15;
+        groundMat.wireframe = true;
+        groundMat.backFaceCulling = false;
+        ground.material = groundMat;
+        ground.isPickable = false;
+        ground.isVisible = true;
+        groundPlaneRef.current = ground;
+        log('INFO', `Piano griglia visibile creato a Y=${GROUND_Y.toFixed(2)}`);
+
+        // Mark surface as detected immediately (ground plane is always there)
+        surfaceDetectedRef.current = true;
+        setSurfaceDetected(true);
+
+        // ====== PER-FRAME: RAYCAST FROM CAMERA CENTER TO GROUND ======
+        xr.baseExperience.sessionManager.onXRFrameObservable.add(() => {
+          if (!hitTestMarkerRef.current || !groundPlaneRef.current) return;
+
+          const cam = xr.baseExperience.camera;
+          if (!cam) return;
+
+          // Get camera world position and forward direction
+          const camForward = cam.getDirection(Vector3.Forward());
+          const camPos = cam.globalPosition.clone();
+
+          // Raycast: find where the forward vector hits the ground plane Y
+          // ground is at GROUND_Y; we solve: camPos.y + t * camForward.y = GROUND_Y
+          if (Math.abs(camForward.y) > 0.001) {
+            const t = (GROUND_Y - camPos.y) / camForward.y;
+            if (t > 0.3 && t < 10) { // Only ahead of camera, reasonable distance
+              const hitX = camPos.x + t * camForward.x;
+              const hitZ = camPos.z + t * camForward.z;
+              const hitPos = new Vector3(hitX, GROUND_Y, hitZ);
+
+              hitTestMarkerRef.current.isVisible = true;
+              hitTestMarkerRef.current.position.set(hitX, GROUND_Y + 0.005, hitZ);
+              lastHitPosRef.current = hitPos;
+            }
+          }
+        });
+        log('INFO', '\u2705 Raycast pavimento attivo');
 
         setXrSession(session);
 
-        // Lifecycle: sessione terminata
         session.onXRSessionEnded.add(() => {
           log('INFO', 'Sessione XR terminata (evento)');
           setXrSession(undefined);
           setTrackingState(undefined);
           xrRef.current = null;
+          lastTrackingRef.current = null;
+          if (trackingTimerRef.current) {
+            clearTimeout(trackingTimerRef.current);
+            trackingTimerRef.current = null;
+          }
           setStatus('AR terminata. Premi "Avvia AR" per riavviare.');
         });
 
-        // Tracking state
         const xrCam = xr.baseExperience.camera;
-        setTrackingState(xrCam.trackingState);
-        log(
-          'INFO',
-          `Tracking state iniziale: ${WebXRTrackingState[xrCam.trackingState]}`,
-        );
+        log('INFO', `Tracking state iniziale: ${WebXRTrackingState[xrCam.trackingState]}`);
 
+        // Debounced tracking state
         xrCam.onTrackingStateChanged.add(newState => {
-          setTrackingState(newState);
-          log(
-            'INFO',
-            `Tracking state cambiato: ${WebXRTrackingState[newState]}`,
-          );
+          if (newState === lastTrackingRef.current) return;
+          if (trackingTimerRef.current) {
+            clearTimeout(trackingTimerRef.current);
+          }
+          trackingTimerRef.current = setTimeout(() => {
+            if (newState !== lastTrackingRef.current) {
+              lastTrackingRef.current = newState;
+              setTrackingState(newState);
+              log('INFO', `Tracking state stabile: ${WebXRTrackingState[newState]}`);
+            }
+          }, 500);
         });
 
-        // Posiziona gli oggetti davanti alla camera
-        if (scene.activeCamera) {
-          const ray = scene.activeCamera.getForwardRay(1);
-          rootNode.position = ray.origin.add(
-            ray.direction.scale(ray.length),
-          );
-          rootNode.rotate(Vector3.Up(), Math.PI);
-          log(
-            'INFO',
-            `Oggetti posizionati davanti alla camera: (${rootNode.position.x.toFixed(2)}, ${rootNode.position.y.toFixed(2)}, ${rootNode.position.z.toFixed(2)})`,
-          );
-        }
+        // Set initial as TRACKING after a short delay
+        setTimeout(() => {
+          if (lastTrackingRef.current === null) {
+            lastTrackingRef.current = WebXRTrackingState.TRACKING;
+            setTrackingState(WebXRTrackingState.TRACKING);
+            log('INFO', 'Tracking state impostato a TRACKING (default iniziale)');
+          }
+        }, 2000);
 
-        setStatus('AR ATTIVA! Inquadra le superfici e tocca per piazzare oggetti.');
+        // Hide demo cube in AR
+        cubesRef.current.forEach(cube => {
+          if (cube.name === 'cube_demo') {
+            cube.isVisible = false;
+          }
+        });
+
+        setStatus('AR ATTIVA! La griglia indica il pavimento. Punta in basso e tocca per piazzare.');
         log('INFO', '=== AR COMPLETAMENTE OPERATIVA ===');
       }
     } catch (error: any) {
@@ -494,49 +488,51 @@ const App = () => {
     }
   }, [scene, rootNode, xrSession]);
 
-  // ========== STEP 3: Change Textures ==========
+  // ========== STEP 3: Change Texture (selected cube only) ==========
   const changeTexture = useCallback(
     (index: number) => {
       if (!scene) return;
       setSelectedTexture(index);
+      selectedTextureRef.current = index;
       const preset = TEXTURE_PRESETS[index];
-      log(
-        'INFO',
-        `Cambio texture: ${preset.name} (R:${preset.color.r.toFixed(1)} G:${preset.color.g.toFixed(1)} B:${preset.color.b.toFixed(1)} A:${preset.alpha})`,
-      );
 
-      // Applica la texture a tutti gli oggetti piazzati
-      objectsRef.current.forEach(mesh => {
-        if (mesh.material && mesh.material instanceof StandardMaterial) {
-          (mesh.material as StandardMaterial).diffuseColor =
-            preset.color.clone();
-          (mesh.material as StandardMaterial).alpha = preset.alpha;
+      if (selectedCubeRef.current) {
+        const mat = selectedCubeRef.current.material as StandardMaterial | null;
+        if (mat) {
+          mat.diffuseColor = preset.color.clone();
+          mat.alpha = preset.alpha;
         }
-      });
-      setStatus(`Texture "${preset.name}" applicata a ${objectsRef.current.length} oggetti`);
+        log('INFO', `Texture "${preset.name}" applicata a: ${selectedCubeRef.current.name}`);
+        setStatus(`Texture "${preset.name}" applicata a ${selectedCubeRef.current.name}`);
+      } else {
+        log('WARN', 'Nessun cubo selezionato!');
+        setStatus('\u26A0\uFE0F Seleziona un cubo prima di cambiare la texture!');
+      }
     },
     [scene],
   );
 
-  // ========== STEP 4: Clear All Objects ==========
-  const clearObjects = useCallback(() => {
-    // Rimuovi solo gli oggetti piazzati dall'utente (non i 3 demo iniziali)
-    const toRemove = objectsRef.current.slice(3);
-    toRemove.forEach(mesh => {
-      mesh.dispose();
-    });
-    objectsRef.current = objectsRef.current.slice(0, 3);
-    setObjectsPlaced(0);
-    log('INFO', `Rimossi ${toRemove.length} oggetti piazzati`);
-    setStatus('Oggetti rimossi. Tocca per piazzarne di nuovi.');
-  }, []);
+  // ========== STEP 5: Remove Selected Cube ==========
+  const removeSelectedCube = useCallback(() => {
+    const cube = selectedCubeRef.current;
+    if (!cube || cube.name === 'cube_demo') {
+      log('WARN', 'Nessun cubo selezionato da rimuovere');
+      setStatus('Seleziona un cubo prima di rimuoverlo');
+      return;
+    }
+    const cubeName = cube.name;
+    cube.dispose();
+    cubesRef.current = cubesRef.current.filter(c => c !== cube);
+    selectCube(null);
+    setObjectsPlaced(prev => Math.max(0, prev - 1));
+    log('INFO', `Rimosso cubo: ${cubeName}`);
+    setStatus(`Cubo "${cubeName}" rimosso.`);
+  }, [selectCube]);
 
   // ========== RENDER ==========
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.sceneContainer}>
-        {/* Engine View - DEVE renderizzarsi SEMPRE per permettere a BabylonNative di inizializzare la superficie grafica.
-            Se camera è undefined, EngineView mostra una view vuota internamente. */}
         <EngineView
           style={styles.engineView}
           camera={camera}
@@ -544,7 +540,7 @@ const App = () => {
           antiAliasing={2}
         />
 
-        {/* Status bar in alto */}
+        {/* Status bar */}
         <View style={styles.statusBar}>
           <Text style={styles.statusText}>{status}</Text>
           {trackingState !== undefined && (
@@ -555,8 +551,7 @@ const App = () => {
                   color:
                     trackingState === WebXRTrackingState.TRACKING
                       ? '#00ff88'
-                      : trackingState ===
-                          WebXRTrackingState.NOT_TRACKING
+                      : trackingState === WebXRTrackingState.NOT_TRACKING
                         ? '#ff4444'
                         : '#ffaa00',
                 },
@@ -569,16 +564,18 @@ const App = () => {
         {/* Info overlay */}
         <View style={styles.infoBar}>
           <Text style={styles.infoText}>
-            📐 Piani: {planesDetected} | 📦 Oggetti: {objectsRef.current.length} (+{objectsPlaced} piazzati)
+            {'📐 Superficie: '}{surfaceDetected ? '✅ Rilevata' : '⏳ Ricerca...'}{' | 📦 Cubi: '}{cubesRef.current.length}{' (+'}{objectsPlaced}{' piazzati)'}
           </Text>
           <Text style={styles.infoText}>
-            📱 {Platform.OS === 'android' ? 'ARCore' : 'ARKit'} | Engine: BabylonJS 6.14.0
+            {'🎯 Selezionato: '}{selectedCube?.name || 'Nessuno'}{' | Modo: '}{interactionMode}
+          </Text>
+          <Text style={styles.infoText}>
+            {'📱 '}{Platform.OS === 'android' ? 'ARCore' : 'ARKit'}{' | BabylonJS 6.14.0'}
           </Text>
         </View>
 
-        {/* Pulsanti principali */}
+        {/* Main controls: AR left, Switch center, Rimuovi right */}
         <View style={styles.controls}>
-          {/* Pulsante AR */}
           <TouchableOpacity
             style={[
               styles.arButton,
@@ -589,38 +586,48 @@ const App = () => {
             disabled={!sceneReady}>
             <Text style={styles.arButtonText}>
               {!sceneReady
-                ? '⏳ Caricamento...'
+                ? 'Caricamento...'
                 : xrSession
-                  ? '⏹ Ferma AR'
-                  : '🚀 Avvia AR'}
+                  ? 'Ferma AR'
+                  : 'Avvia AR'}
             </Text>
           </TouchableOpacity>
 
-          {/* Pulsante Clear */}
-          {objectsPlaced > 0 && (
-            <TouchableOpacity
-              style={styles.clearButton}
-              onPress={clearObjects}>
-              <Text style={styles.clearButtonText}>🗑 Rimuovi ({objectsPlaced})</Text>
+          <View style={styles.modeToggleContainer}>
+            <Text style={[styles.modeLabel, interactionMode === 'SELEZIONE' && styles.modeLabelActive]}>
+              {'SEL'}
+            </Text>
+            <Switch
+              value={interactionMode === 'CREAZIONE'}
+              onValueChange={(isCreazione) => {
+                const newMode = isCreazione ? 'CREAZIONE' : 'SELEZIONE';
+                setInteractionMode(newMode);
+                interactionModeRef.current = newMode;
+                log('INFO', `Modalità cambiata: ${newMode}`);
+                setStatus(newMode === 'CREAZIONE' ? 'Modalità CREAZIONE: tocca per piazzare cubi' : 'Modalità SELEZIONE: tocca un cubo per selezionarlo');
+              }}
+              trackColor={{false: '#9C27B0', true: '#4CAF50'}}
+              thumbColor={interactionMode === 'CREAZIONE' ? '#8BC34A' : '#CE93D8'}
+            />
+            <Text style={[styles.modeLabel, interactionMode === 'CREAZIONE' && styles.modeLabelActive]}>
+              {'CREA'}
+            </Text>
+          </View>
+
+          {selectedCube && selectedCube.name !== 'cube_demo' ? (
+            <TouchableOpacity style={styles.clearButton} onPress={removeSelectedCube}>
+              <Text style={styles.clearButtonText}>Rimuovi</Text>
             </TouchableOpacity>
+          ) : (
+            <View style={styles.clearButtonPlaceholder} />
           )}
-
-          {/* Pulsante Debug */}
-          <TouchableOpacity
-            style={styles.debugButton}
-            onPress={() => {
-              refreshLogs();
-              setShowDebug(!showDebug);
-            }}>
-            <Text style={styles.debugButtonText}>
-              {showDebug ? '✖ Chiudi Log' : '🔧 Log'}
-            </Text>
-          </TouchableOpacity>
         </View>
 
         {/* Texture selector */}
         <View style={styles.textureBar}>
-          <Text style={styles.textureLabelText}>Texture:</Text>
+          <Text style={styles.textureLabelText}>
+            Texture{selectedCube ? ` (${selectedCube.name})` : ' (nessuno)'}:
+          </Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {TEXTURE_PRESETS.map((preset, idx) => (
               <TouchableOpacity
@@ -630,51 +637,71 @@ const App = () => {
                   {
                     backgroundColor: `rgb(${Math.floor(preset.color.r * 255)},${Math.floor(preset.color.g * 255)},${Math.floor(preset.color.b * 255)})`,
                     borderWidth: selectedTexture === idx ? 3 : 1,
-                    borderColor:
-                      selectedTexture === idx ? '#ffffff' : '#666666',
-                    opacity: preset.alpha < 1 ? 0.6 : 1,
+                    borderColor: selectedTexture === idx ? '#ffffff' : '#666666',
+                    opacity: !selectedCube ? 0.4 : preset.alpha < 1 ? 0.6 : 1,
                   },
                 ]}
-                onPress={() => changeTexture(idx)}>
+                onPress={() => changeTexture(idx)}
+                disabled={!selectedCube}>
                 <Text style={styles.textureButtonText}>{preset.name}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
         </View>
 
-        {/* Debug log panel */}
-        {showDebug && (
-          <View style={styles.debugPanel}>
-            <View style={styles.debugHeader}>
-              <Text style={styles.debugTitle}>📋 Debug Log</Text>
-              <TouchableOpacity onPress={refreshLogs}>
-                <Text style={styles.refreshText}>🔄 Aggiorna</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.debugScroll}>
-              {debugLogs
-                .slice()
-                .reverse()
-                .map((entry, idx) => (
-                  <Text
-                    key={idx}
-                    style={[
-                      styles.logEntry,
-                      {
-                        color:
-                          entry.level === 'ERROR'
-                            ? '#ff4444'
-                            : entry.level === 'WARN'
-                              ? '#ffaa00'
-                              : '#aaddaa',
-                      },
-                    ]}>
-                    [{entry.time}] {entry.level}: {entry.msg}
-                  </Text>
+        {/* Manipulation panel */}
+        {showManipulator && selectedCube && (
+          <View style={styles.manipulatorPanel}>
+            {/* Row 1: property selector buttons */}
+            {!manipProperty && (
+              <View style={styles.manipBtnRow}>
+                {[
+                  {key: 'scala', label: 'Scala'},
+                  {key: 'rotX', label: 'Rot X'},
+                  {key: 'rotY', label: 'Rot Y'},
+                ].map(item => (
+                  <TouchableOpacity
+                    key={item.key}
+                    style={styles.manipPropBtn}
+                    onPress={() => setManipProperty(item.key)}>
+                    <Text style={styles.manipPropBtnText}>{item.label}</Text>
+                  </TouchableOpacity>
                 ))}
-            </ScrollView>
+                <TouchableOpacity style={styles.deselectBtn} onPress={() => selectCube(null)}>
+                  <Text style={styles.deselectBtnText}>{'✖'}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {/* Row when a property IS selected: show - / label / + / ✖ */}
+            {manipProperty && (
+              <View style={styles.manipActiveRow}>
+                <TouchableOpacity
+                  style={styles.manipStepBtn}
+                  onPress={() => manipStep(manipProperty, -1)}>
+                  <Text style={styles.manipStepBtnText}>{' − '}</Text>
+                </TouchableOpacity>
+                <Text style={styles.manipActiveLabel}>
+                  {manipProperty === 'scala'
+                    ? `Scala ${((selectedCube?.scaling?.x || 1) * 100).toFixed(0)}%`
+                    : manipProperty === 'rotX'
+                      ? `Rot X ${(((selectedCube?.rotation?.x || 0) * 180) / Math.PI).toFixed(0)}°`
+                      : `Rot Y ${(((selectedCube?.rotation?.y || 0) * 180) / Math.PI).toFixed(0)}°`}
+                </Text>
+                <TouchableOpacity
+                  style={styles.manipStepBtn}
+                  onPress={() => manipStep(manipProperty, 1)}>
+                  <Text style={styles.manipStepBtnText}>{' + '}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.deselectBtn}
+                  onPress={() => setManipProperty(null)}>
+                  <Text style={styles.deselectBtnText}>{'✖'}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         )}
+
       </View>
     </SafeAreaView>
   );
@@ -730,19 +757,16 @@ const styles = StyleSheet.create({
     left: 10,
     right: 10,
     flexDirection: 'row',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 10,
   },
   arButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     borderRadius: 25,
     elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
+    minWidth: 100,
+    alignItems: 'center',
   },
   arButtonInactive: {
     backgroundColor: '#2196F3',
@@ -756,32 +780,40 @@ const styles = StyleSheet.create({
   },
   arButtonText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 'bold',
   },
   clearButton: {
     backgroundColor: '#ff9800',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     borderRadius: 25,
+    minWidth: 100,
+    alignItems: 'center',
   },
   clearButtonText: {
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
   },
-  debugButton: {
-    backgroundColor: '#333333',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+  modeToggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
     borderRadius: 25,
-    borderWidth: 1,
-    borderColor: '#666',
+    gap: 4,
   },
-  debugButtonText: {
-    color: '#aaa',
-    fontSize: 14,
+  modeLabel: {
+    color: '#888',
+    fontSize: 11,
+    fontWeight: 'bold',
   },
+  modeLabelActive: {
+    color: '#fff',
+  },
+
   textureBar: {
     position: 'absolute',
     bottom: 60,
@@ -795,9 +827,10 @@ const styles = StyleSheet.create({
   },
   textureLabelText: {
     color: '#fff',
-    fontSize: 12,
-    marginRight: 8,
+    fontSize: 11,
+    marginRight: 6,
     fontWeight: 'bold',
+    maxWidth: 110,
   },
   textureButton: {
     paddingHorizontal: 12,
@@ -813,44 +846,76 @@ const styles = StyleSheet.create({
     textShadowOffset: {width: 1, height: 1},
     textShadowRadius: 2,
   },
-  debugPanel: {
+  clearButtonPlaceholder: {
+    minWidth: 100,
+  },
+  manipulatorPanel: {
     position: 'absolute',
-    top: 130,
+    bottom: 8,
     left: 10,
     right: 10,
-    bottom: 180,
-    backgroundColor: 'rgba(0,0,0,0.9)',
-    borderRadius: 8,
-    padding: 10,
+    backgroundColor: 'rgba(0,0,30,0.85)',
+    padding: 8,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#3388ff',
   },
-  debugHeader: {
+  manipBtnRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-    paddingBottom: 6,
+    gap: 8,
   },
-  debugTitle: {
+  manipPropBtn: {
+    backgroundColor: '#335599',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  manipPropBtnText: {
+    color: '#aaccff',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  manipActiveRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+  },
+  manipStepBtn: {
+    backgroundColor: '#335599',
+    width: 50,
+    height: 44,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  manipStepBtnText: {
+    color: '#ffffff',
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
+  manipActiveLabel: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: 'bold',
+    minWidth: 110,
+    textAlign: 'center',
+  },
+  deselectBtn: {
+    backgroundColor: '#883333',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  deselectBtnText: {
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
   },
-  refreshText: {
-    color: '#66bbff',
-    fontSize: 12,
-  },
-  debugScroll: {
-    flex: 1,
-  },
-  logEntry: {
-    fontSize: 10,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    marginBottom: 2,
-  },
+
 });
 
 export default App;

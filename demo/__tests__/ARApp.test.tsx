@@ -3,11 +3,14 @@
  *
  * Verifica:
  * 1. Rendering iniziale dell'app
- * 2. Stato iniziale (messaggio di caricamento)
- * 3. Pulsante AR presente e funzionante
- * 4. Selettore texture visibile
- * 5. Log debug toggle
- * 6. Compatibilità piattaforma (ARCore/ARKit label)
+ * 2. Pulsante AR presente
+ * 3. Selettore texture (disabilitato senza selezione)
+ * 4. Log debug toggle
+ * 5. Contatore piani e cubi
+ * 6. Info selezione cubo
+ * 7. Compatibilità piattaforma (ARCore/ARKit)
+ * 8. Scene, Camera, Luci, Mesh creation
+ * 9. EngineView sempre renderizzato
  */
 
 import React from 'react';
@@ -33,13 +36,7 @@ const mockScene = {
   createDefaultCamera: jest.fn(),
   createDefaultLight: jest.fn(),
   clearColor: null,
-  activeCamera: {
-    getForwardRay: jest.fn(() => ({
-      origin: {add: jest.fn(() => ({x: 0, y: 0, z: 1}))},
-      direction: {scale: jest.fn(() => ({x: 0, y: 0, z: 1}))},
-      length: 1,
-    })),
-  },
+  activeCamera: null,
   onPointerObservable: {
     add: jest.fn(),
   },
@@ -51,13 +48,14 @@ jest.mock('@babylonjs/core', () => {
   const Vector3 = jest.fn().mockImplementation((x, y, z) => ({x, y, z}));
   Vector3.Zero = jest.fn(() => ({x: 0, y: 0, z: 0}));
   Vector3.Up = jest.fn(() => ({x: 0, y: 1, z: 0}));
+  Vector3.TransformCoordinates = jest.fn(() => ({x: 0, y: 0, z: 0}));
 
   const Color3 = jest.fn().mockImplementation((r, g, b) => ({
-    r,
-    g,
-    b,
+    r, g, b,
     clone: jest.fn().mockReturnThis(),
   }));
+  Color3.Black = jest.fn(() => ({r: 0, g: 0, b: 0, clone: jest.fn().mockReturnThis()}));
+
   const Color4 = jest.fn().mockImplementation((r, g, b, a) => ({r, g, b, a}));
 
   return {
@@ -71,46 +69,37 @@ jest.mock('@babylonjs/core', () => {
       wheelDeltaPercentage: 0,
       pinchDeltaPercentage: 0,
     })),
-    FreeCamera: jest.fn(),
     HemisphericLight: jest.fn(() => ({intensity: 0})),
     DirectionalLight: jest.fn(() => ({intensity: 0})),
     MeshBuilder: {
       CreateBox: jest.fn(() => ({
-        position: {x: 0, y: 0, z: 0},
+        position: {x: 0, y: 0, z: 0.5},
         material: null,
         parent: null,
+        isPickable: false,
+        isVisible: true,
+        scaling: {x: 1, y: 1, z: 1},
+        rotation: {x: 0, y: 0, z: 0},
+        name: 'cube_demo',
         dispose: jest.fn(),
       })),
       CreateSphere: jest.fn(() => ({
         position: {x: 0, y: 0, z: 0},
         material: null,
         parent: null,
-        dispose: jest.fn(),
-      })),
-      CreateCylinder: jest.fn(() => ({
-        position: {x: 0, y: 0, z: 0},
-        material: null,
-        parent: null,
-        dispose: jest.fn(),
-      })),
-      CreateTorus: jest.fn(() => ({
-        position: {x: 0, y: 0, z: 0},
-        material: null,
-        parent: null,
-        dispose: jest.fn(),
-      })),
-      CreatePlane: jest.fn(() => ({
-        position: {x: 0, y: 0, z: 0},
-        material: null,
-        parent: null,
+        isPickable: false,
+        isVisible: false,
+        rotationQuaternion: null,
+        scaling: {x: 1, y: 1, z: 1},
+        name: 'hitTestMarker',
         dispose: jest.fn(),
       })),
     },
     StandardMaterial: jest.fn(() => ({
       diffuseColor: null,
       specularColor: null,
+      emissiveColor: null,
       alpha: 1,
-      backFaceCulling: true,
     })),
     Texture: jest.fn(),
     TransformNode: jest.fn(() => ({
@@ -136,6 +125,9 @@ jest.mock('@babylonjs/core', () => {
     PointerEventTypes: {
       POINTERTAP: 4,
     },
+    Quaternion: jest.fn().mockImplementation(() => ({x: 0, y: 0, z: 0, w: 1})),
+    Matrix: jest.fn(),
+    Mesh: jest.fn(),
   };
 });
 
@@ -154,9 +146,7 @@ describe('AR Demo App', () => {
   });
 
   afterEach(() => {
-    if (tree) {
-      tree.unmount();
-    }
+    if (tree) tree.unmount();
   });
 
   test('renderizza senza crash', () => {
@@ -187,15 +177,14 @@ describe('AR Demo App', () => {
     expect(statusTexts.length).toBeGreaterThan(0);
   });
 
-  test('mostra le informazioni piattaforma (ARCore/ARKit)', () => {
+  test('mostra info piattaforma (ARCore/ARKit)', () => {
     const root = tree.root;
     const platformLabel = Platform.OS === 'android' ? 'ARCore' : 'ARKit';
     const infoTexts = root.findAll(
       node =>
         node.type === 'Text' &&
         node.children.some(
-          child =>
-            typeof child === 'string' && child.includes(platformLabel),
+          child => typeof child === 'string' && child.includes(platformLabel),
         ),
     );
     expect(infoTexts.length).toBeGreaterThan(0);
@@ -223,37 +212,41 @@ describe('AR Demo App', () => {
     expect(debugBtns.length).toBeGreaterThan(0);
   });
 
-  test('mostra contatore piani e oggetti', () => {
+  test('mostra contatore piani e cubi', () => {
     const root = tree.root;
     const infoTexts = root.findAll(
       node =>
         node.type === 'Text' &&
-        typeof node.children[0] === 'string' &&
-        node.children[0].includes('Piani'),
+        node.children.some(
+          child => typeof child === 'string' && child.includes('Piani'),
+        ),
     );
     expect(infoTexts.length).toBeGreaterThan(0);
   });
 
-  test('EngineView viene sempre renderizzato (necessario per inizializzazione)', () => {
+  test('mostra info selezione cubo (Nessuno inizialmente)', () => {
     const root = tree.root;
-    // EngineView DEVE essere sempre montato, anche prima che la camera sia pronta
+    const selectionTexts = root.findAll(
+      node =>
+        node.type === 'Text' &&
+        node.children.some(
+          child => typeof child === 'string' && child.includes('Selezionato'),
+        ),
+    );
+    expect(selectionTexts.length).toBeGreaterThan(0);
+  });
+
+  test('EngineView sempre renderizzato', () => {
+    const root = tree.root;
     const engineViews = root.findAll(
       node => node.props.testID === 'engine-view',
     );
     expect(engineViews.length).toBeGreaterThan(0);
   });
 
-  test('mostra tutte le texture disponibili', () => {
+  test('mostra tutte le 7 texture disponibili', () => {
     const root = tree.root;
-    const textureNames = [
-      'Rosso',
-      'Blu',
-      'Verde',
-      'Oro',
-      'Trasparente',
-      'Legno',
-      'Metallo',
-    ];
+    const textureNames = ['Rosso', 'Blu', 'Verde', 'Oro', 'Trasparente', 'Legno', 'Metallo'];
     textureNames.forEach(name => {
       const found = root.findAll(
         node =>
@@ -264,49 +257,82 @@ describe('AR Demo App', () => {
       expect(found.length).toBeGreaterThanOrEqual(1);
     });
   });
+
+  test('texture label mostra "nessuno" quando nessun cubo selezionato', () => {
+    const root = tree.root;
+    const labels = root.findAll(
+      node =>
+        node.type === 'Text' &&
+        node.children.some(
+          child => typeof child === 'string' && child.includes('nessuno'),
+        ),
+    );
+    expect(labels.length).toBeGreaterThan(0);
+  });
+
+  test('pannello manipolazione non visibile inizialmente', () => {
+    const root = tree.root;
+    const manipLabels = root.findAll(
+      node =>
+        node.type === 'Text' &&
+        typeof node.children[0] === 'string' &&
+        node.children[0].includes('Scala'),
+    );
+    expect(manipLabels.length).toBe(0);
+  });
 });
 
 describe('AR Configuration Tests', () => {
-  test('Scene viene creata con il motore BabylonJS', () => {
+  test('Scene creata con il motore BabylonJS', () => {
     const {Scene} = require('@babylonjs/core');
     expect(Scene).toHaveBeenCalled();
   });
 
-  test('ArcRotateCamera viene creata (necessaria per React Native)', () => {
+  test('ArcRotateCamera creata', () => {
     const {ArcRotateCamera} = require('@babylonjs/core');
     expect(ArcRotateCamera).toHaveBeenCalled();
   });
 
-  test('Luci vengono aggiunte alla scena', () => {
+  test('Luci aggiunte alla scena', () => {
     const {HemisphericLight, DirectionalLight} = require('@babylonjs/core');
     expect(HemisphericLight).toHaveBeenCalled();
     expect(DirectionalLight).toHaveBeenCalled();
   });
 
-  test('Mesh demo vengono creati', () => {
+  test('Cubo demo creato', () => {
     const {MeshBuilder} = require('@babylonjs/core');
-    expect(MeshBuilder.CreateBox).toHaveBeenCalled();
-    expect(MeshBuilder.CreateSphere).toHaveBeenCalled();
-    expect(MeshBuilder.CreateCylinder).toHaveBeenCalled();
+    expect(MeshBuilder.CreateBox).toHaveBeenCalledWith(
+      'cube_demo',
+      expect.objectContaining({size: expect.any(Number)}),
+      expect.anything(),
+    );
   });
 
-  test('TransformNode root viene creato per AR', () => {
+  test('Hit-test marker (sfera) creato', () => {
+    const {MeshBuilder} = require('@babylonjs/core');
+    expect(MeshBuilder.CreateSphere).toHaveBeenCalledWith(
+      'hitTestMarker',
+      expect.objectContaining({diameter: expect.any(Number)}),
+      expect.anything(),
+    );
+  });
+
+  test('TransformNode root per AR', () => {
     const {TransformNode} = require('@babylonjs/core');
     expect(TransformNode).toHaveBeenCalledWith('ARRoot', expect.anything());
   });
 
-  test('Pointer observable viene registrato per il tap', () => {
+  test('Pointer observable registrato per il tap', () => {
     expect(mockScene.onPointerObservable.add).toHaveBeenCalled();
   });
 });
 
 describe('Platform Compatibility', () => {
-  test('identifica correttamente la piattaforma', () => {
-    // Su test runner, Platform.OS sarà 'ios' o 'android' a seconda del preset
+  test('identifica la piattaforma', () => {
     expect(['ios', 'android']).toContain(Platform.OS);
   });
 
-  test('il label AR corrisponde alla piattaforma', () => {
+  test('label AR corrisponde alla piattaforma', () => {
     const expectedLabel = Platform.OS === 'android' ? 'ARCore' : 'ARKit';
     expect(['ARCore', 'ARKit']).toContain(expectedLabel);
   });
