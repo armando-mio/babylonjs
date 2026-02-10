@@ -6,9 +6,10 @@ import {
   StyleSheet,
   TouchableOpacity,
   Platform,
-  ScrollView,
   Alert,
-  Switch,
+  FlatList,
+  ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import {EngineView, useEngine} from '@babylonjs/react-native';
 import {
@@ -28,8 +29,12 @@ import {
   AbstractMesh,
   PointerEventTypes,
   Mesh,
+  ShadowGenerator,
+  SceneLoader,
+  Ray,
 } from '@babylonjs/core';
 import '@babylonjs/loaders';
+import {AR_MODELS, ModelData} from './modelsData';
 
 // ================= LOGGER =================
 const LOG_MAX = 60;
@@ -55,20 +60,27 @@ function log(level: LogEntry['level'], msg: string) {
   else console.log(prefix, msg);
 }
 
-// ================= TEXTURE PRESETS =================
-const TEXTURE_PRESETS: {name: string; color: Color3; alpha: number}[] = [
-  {name: 'Rosso', color: new Color3(1, 0, 0), alpha: 1},
-  {name: 'Blu', color: new Color3(0, 0.3, 1), alpha: 1},
-  {name: 'Verde', color: new Color3(0, 0.8, 0.2), alpha: 1},
-];
-
 // ================= CONSTANTS =================
-const CUBE_SIZE = 0.12;
+const GROUND_Y = -1.3;
 const SELECTION_EMISSIVE = new Color3(0.3, 0.6, 1);
+const TARGET_MODEL_SIZE = 1.0; // normalize all models to ~1m
+const {width: SCREEN_WIDTH} = Dimensions.get('window');
+const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
+
+// ================= APP SCREENS =================
+type AppScreen = 'gallery' | 'viewer';
+type ViewerMode = 'AR' | 'VR';
 
 // ================= APP =================
 const App = () => {
   const engine = useEngine();
+
+  // Navigation state
+  const [currentScreen, setCurrentScreen] = useState<AppScreen>('gallery');
+  const [selectedModel, setSelectedModel] = useState<ModelData | null>(null);
+  const [viewerMode, setViewerMode] = useState<ViewerMode>('AR');
+
+  // 3D state
   const [camera, setCamera] = useState<Camera>();
   const [scene, setScene] = useState<Scene>();
   const [rootNode, setRootNode] = useState<TransformNode>();
@@ -76,163 +88,363 @@ const App = () => {
   const [trackingState, setTrackingState] = useState<WebXRTrackingState>();
   const [status, setStatus] = useState('Inizializzazione motore 3D...');
   const [surfaceDetected, setSurfaceDetected] = useState(false);
-  const [selectedTexture, setSelectedTexture] = useState(0);
-  const [objectsPlaced, setObjectsPlaced] = useState(0);
   const [sceneReady, setSceneReady] = useState(false);
-  const [selectedCube, setSelectedCube] = useState<AbstractMesh | null>(null);
+  const [modelLoaded, setModelLoaded] = useState(false);
+  const [loadingModel, setLoadingModel] = useState(false);
+
+  // Interaction state
+  const [selectedInstance, setSelectedInstance] = useState<AbstractMesh | null>(null);
+  const [objectsPlaced, setObjectsPlaced] = useState(0);
+
+  // Manipulation state
   const [showManipulator, setShowManipulator] = useState(false);
-  const [interactionMode, setInteractionMode] = useState<'CREAZIONE' | 'SELEZIONE'>('CREAZIONE');
   const [manipProperty, setManipProperty] = useState<string | null>(null);
   const [, forceRender] = useState(0);
 
-  const cubesRef = useRef<AbstractMesh[]>([]);
+  // Texture / Material state
+  const [showTexturePanel, setShowTexturePanel] = useState(false);
+  const [meshListForTexture, setMeshListForTexture] = useState<{name: string; mesh: AbstractMesh}[]>([]);
+  const [selectedMeshIdx, setSelectedMeshIdx] = useState<number>(0);
+
+  // Refs
   const xrRef = useRef<any>(null);
-  const selectedCubeRef = useRef<AbstractMesh | null>(null);
+  const selectedInstanceRef = useRef<AbstractMesh | null>(null);
+  const placedInstancesRef = useRef<TransformNode[]>([]);
   const lastHitPosRef = useRef<Vector3 | null>(null);
   const sceneRef = useRef<Scene | null>(null);
   const rootNodeRef = useRef<TransformNode | null>(null);
-  const selectedTextureRef = useRef(0);
   const trackingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTrackingRef = useRef<WebXRTrackingState | null>(null);
   const surfaceDetectedRef = useRef(false);
-  const interactionModeRef = useRef<'CREAZIONE' | 'SELEZIONE'>('CREAZIONE');
   const hitTestMarkerRef = useRef<Mesh | null>(null);
   const groundPlaneRef = useRef<Mesh | null>(null);
-  const groundYRef = useRef(-1.3);
+  const shadowGenRef = useRef<ShadowGenerator | null>(null);
+  const loadedMeshesRef = useRef<AbstractMesh[]>([]);
+  const dirLightRef = useRef<DirectionalLight | null>(null);
+  const modelRootRef = useRef<TransformNode | null>(null);
 
-  // ========== MANIPULATE CUBE: +/- step ==========
-  const manipStep = useCallback((prop: string, direction: 1 | -1) => {
-    const cube = selectedCubeRef.current;
-    if (!cube) return;
-    if (prop === 'scala') {
-      const cur = cube.scaling.x;
-      const next = Math.min(5, Math.max(0.1, cur + direction * 0.1)); // ±0.1 step, clamp 0.1-5
-      cube.scaling = new Vector3(next, next, next);
-      log('INFO', `Scala: ${(next * 100).toFixed(0)}%`);
-    } else if (prop === 'rotX') {
-      cube.rotation.x += direction * (15 * Math.PI / 180); // ±15°
-      log('INFO', `Rot X: ${((cube.rotation.x * 180) / Math.PI).toFixed(0)}°`);
-    } else if (prop === 'rotY') {
-      cube.rotation.y += direction * (15 * Math.PI / 180); // ±15°
-      log('INFO', `Rot Y: ${((cube.rotation.y * 180) / Math.PI).toFixed(0)}°`);
+  // ========== SELECT / DESELECT INSTANCE ==========
+  const selectInstance = useCallback((node: TransformNode | null) => {
+    // Reset emissive on previous
+    if (selectedInstanceRef.current) {
+      selectedInstanceRef.current.getChildMeshes().forEach(m => {
+        const mat = m.material as StandardMaterial | null;
+        if (mat && mat.emissiveColor) mat.emissiveColor = Color3.Black();
+      });
     }
-    forceRender(n => n + 1);
-  }, []);
-
-  // ========== SELECT / DESELECT CUBE ==========
-  const selectCube = useCallback((mesh: AbstractMesh | null) => {
-    if (selectedCubeRef.current) {
-      const prevMat = selectedCubeRef.current.material as StandardMaterial | null;
-      if (prevMat) {
-        prevMat.emissiveColor = Color3.Black();
-      }
-      log('INFO', `Deselezionato: ${selectedCubeRef.current.name}`);
-    }
-    selectedCubeRef.current = mesh;
-    setSelectedCube(mesh);
-    if (mesh) {
-      const mat = mesh.material as StandardMaterial | null;
-      if (mat) {
-        mat.emissiveColor = SELECTION_EMISSIVE.clone();
-      }
+    selectedInstanceRef.current = node as any;
+    setSelectedInstance(node as any);
+    if (node) {
+      node.getChildMeshes().forEach(m => {
+        const mat = m.material as StandardMaterial | null;
+        if (mat && mat.emissiveColor) mat.emissiveColor = SELECTION_EMISSIVE.clone();
+      });
       setShowManipulator(true);
-      log('INFO', `Selezionato: ${mesh.name}`);
+      log('INFO', `Selezionato: ${node.name}`);
     } else {
       setShowManipulator(false);
       setManipProperty(null);
     }
   }, []);
 
-  // ========== PLACE CUBE AT POSITION ==========
-  const placeCubeAt = useCallback(
-    (position: Vector3, scn: Scene, _root: TransformNode) => {
-      const objName = `cube_${Date.now()}`;
-      const newCube = MeshBuilder.CreateBox(objName, {size: CUBE_SIZE}, scn);
-      newCube.position = position.clone();
-      newCube.position.y += CUBE_SIZE / 2;
-      // NO parent — cubes stay in world coordinates so they remain visible in AR
-      newCube.isPickable = true;
+  // ========== PLACE MODEL COPY AT POSITION ==========
+  const placeModelAt = useCallback(async (position: Vector3, scn: Scene, model: ModelData) => {
+    const instName = `placed_${Date.now()}`;
+    log('INFO', `Piazzamento ${model.name} a (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
+    try {
+      const instRoot = new TransformNode(instName, scn);
+      instRoot.position = position.clone();
 
-      const mat = new StandardMaterial(`${objName}_mat`, scn);
-      const texIdx = selectedTextureRef.current;
-      mat.diffuseColor = TEXTURE_PRESETS[texIdx].color.clone();
-      mat.alpha = TEXTURE_PRESETS[texIdx].alpha;
-      mat.specularColor = new Color3(0.4, 0.4, 0.4);
-      mat.emissiveColor = Color3.Black();
-      newCube.material = mat;
+      const result = await SceneLoader.ImportMeshAsync('', 'app:///', model.fileName, scn);
+      result.meshes.forEach(mesh => {
+        if (mesh.name === '__root__') mesh.parent = instRoot;
+        mesh.isPickable = true;
+        if (shadowGenRef.current && mesh instanceof Mesh) {
+          shadowGenRef.current.addShadowCaster(mesh);
+        }
+      });
 
-      cubesRef.current.push(newCube);
+      // Normalize placed instance scale
+      let pMin = new Vector3(Infinity, Infinity, Infinity);
+      let pMax = new Vector3(-Infinity, -Infinity, -Infinity);
+      result.meshes.forEach(mesh => {
+        mesh.computeWorldMatrix(true);
+        const bi = mesh.getBoundingInfo();
+        if (bi) {
+          pMin = Vector3.Minimize(pMin, bi.boundingBox.minimumWorld);
+          pMax = Vector3.Maximize(pMax, bi.boundingBox.maximumWorld);
+        }
+      });
+      const pSize = pMax.subtract(pMin);
+      const pMaxDim = Math.max(pSize.x, pSize.y, pSize.z, 0.001);
+      const pNormScale = TARGET_MODEL_SIZE / pMaxDim;
+      instRoot.scaling = new Vector3(pNormScale, pNormScale, pNormScale);
+
+      placedInstancesRef.current.push(instRoot);
       setObjectsPlaced(prev => prev + 1);
-      selectCube(newCube);
+      selectInstance(instRoot);
+      setStatus(`${model.name} piazzato!`);
+      log('INFO', `Piazzato: ${instName}`);
+    } catch (err: any) {
+      log('ERROR', `Errore piazzamento: ${err.message}`);
+    }
+  }, [selectInstance]);
 
-      log(
-        'INFO',
-        `Cubo piazzato: "${objName}" a (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)}) texture=${TEXTURE_PRESETS[texIdx].name}`,
+  // ========== REMOVE SELECTED INSTANCE ==========
+  const removeSelectedInstance = useCallback(() => {
+    const inst = selectedInstanceRef.current;
+    if (!inst) return;
+    const name = inst.name;
+    // Dispose all child meshes, then the node
+    if ('getChildMeshes' in inst) {
+      (inst as TransformNode).getChildMeshes().forEach(m => m.dispose());
+    }
+    inst.dispose();
+    placedInstancesRef.current = placedInstancesRef.current.filter(n => n !== inst);
+    selectInstance(null);
+    setObjectsPlaced(prev => Math.max(0, prev - 1));
+    log('INFO', `Rimosso: ${name}`);
+    setStatus(`Oggetto rimosso.`);
+  }, [selectInstance]);
+
+  // ========== MANIPULATE MODEL: +/- step ==========
+  const manipStep = useCallback((prop: string, direction: 1 | -1) => {
+    // Manipulate selected placed instance, or fall back to preview model root
+    const root = selectedInstanceRef.current || modelRootRef.current;
+    if (!root) return;
+    if (prop === 'scala') {
+      const cur = root.scaling.x;
+      const next = Math.min(5, Math.max(0.05, cur + direction * 0.1));
+      root.scaling = new Vector3(next, next, next);
+      log('INFO', `Scala: ${(next * 100).toFixed(0)}%`);
+    } else if (prop === 'rotX') {
+      root.rotation.x += direction * (15 * Math.PI / 180);
+      log('INFO', `Rot X: ${((root.rotation.x * 180) / Math.PI).toFixed(0)}deg`);
+    } else if (prop === 'rotY') {
+      root.rotation.y += direction * (15 * Math.PI / 180);
+      log('INFO', `Rot Y: ${((root.rotation.y * 180) / Math.PI).toFixed(0)}deg`);
+    } else if (prop === 'posY') {
+      root.position.y += direction * 0.05;
+      log('INFO', `Pos Y: ${root.position.y.toFixed(2)}m`);
+    }
+    forceRender(n => n + 1);
+  }, []);
+
+  // ========== TEXTURE / MATERIAL PRESETS ==========
+  const TEXTURE_PRESETS = [
+    {label: 'Originale', color: null, metallic: null, roughness: null},
+    {label: 'Rosso', color: new Color3(0.8, 0.1, 0.1), metallic: 0.1, roughness: 0.7},
+    {label: 'Blu', color: new Color3(0.1, 0.2, 0.9), metallic: 0.1, roughness: 0.7},
+    {label: 'Verde', color: new Color3(0.1, 0.7, 0.2), metallic: 0.1, roughness: 0.7},
+    {label: 'Oro', color: new Color3(0.85, 0.65, 0.13), metallic: 0.9, roughness: 0.3},
+    {label: 'Argento', color: new Color3(0.75, 0.75, 0.78), metallic: 0.95, roughness: 0.2},
+    {label: 'Legno', color: new Color3(0.55, 0.35, 0.17), metallic: 0.0, roughness: 0.9},
+    {label: 'Bianco', color: new Color3(0.95, 0.95, 0.95), metallic: 0.0, roughness: 0.5},
+    {label: 'Nero', color: new Color3(0.05, 0.05, 0.05), metallic: 0.3, roughness: 0.5},
+  ];
+
+  const originalMaterialsRef = useRef<Map<string, {diffuse?: Color3; emissive?: Color3}>>(new Map());
+
+  const refreshMeshList = useCallback((target?: TransformNode | null) => {
+    const root = target || selectedInstanceRef.current || modelRootRef.current;
+    if (!root) {
+      setMeshListForTexture([]);
+      return;
+    }
+    const meshes = root.getChildMeshes().filter(m => m.material && m.name !== '__root__' && m.name !== 'shadowGround' && m.name !== 'hitTestMarker' && m.name !== 'arGrid');
+    const list = meshes.map((m, i) => ({name: m.name || `mesh_${i}`, mesh: m}));
+    setMeshListForTexture(list);
+    setSelectedMeshIdx(0);
+  }, []);
+
+  const applyMaterialPreset = useCallback((presetIdx: number) => {
+    if (meshListForTexture.length === 0) return;
+    const entry = meshListForTexture[selectedMeshIdx];
+    if (!entry) return;
+    const mesh = entry.mesh;
+    const mat = mesh.material as StandardMaterial | null;
+    if (!mat) return;
+    const preset = TEXTURE_PRESETS[presetIdx];
+
+    // Save original if not saved
+    if (!originalMaterialsRef.current.has(mesh.uniqueId.toString())) {
+      originalMaterialsRef.current.set(mesh.uniqueId.toString(), {
+        diffuse: mat.diffuseColor?.clone(),
+        emissive: mat.emissiveColor?.clone(),
+      });
+    }
+
+    if (preset.color === null) {
+      // Restore original
+      const orig = originalMaterialsRef.current.get(mesh.uniqueId.toString());
+      if (orig) {
+        if (orig.diffuse) mat.diffuseColor = orig.diffuse.clone();
+        if (orig.emissive) mat.emissiveColor = orig.emissive.clone();
+      }
+      log('INFO', `Texture ripristinata su ${mesh.name}`);
+    } else {
+      mat.diffuseColor = preset.color.clone();
+      log('INFO', `Texture '${preset.label}' applicata a ${mesh.name}`);
+    }
+    forceRender(n => n + 1);
+  }, [meshListForTexture, selectedMeshIdx]);
+
+  // ========== LOAD GLB MODEL ==========
+  const loadModel = useCallback(async (model: ModelData, scn: Scene) => {
+    if (!scn) return;
+    setLoadingModel(true);
+    setModelLoaded(false);
+    setStatus(`Caricamento ${model.name}...`);
+    log('INFO', `Caricamento modello: ${model.fileName}`);
+
+    try {
+      // Dispose previous loaded meshes
+      loadedMeshesRef.current.forEach(m => {
+        try { m.dispose(); } catch (e) {}
+      });
+      loadedMeshesRef.current = [];
+      if (modelRootRef.current) {
+        modelRootRef.current.dispose();
+        modelRootRef.current = null;
+      }
+
+      // Create model root
+      const modelRoot = new TransformNode('modelRoot', scn);
+      modelRoot.position = new Vector3(0, GROUND_Y, 0);
+      modelRootRef.current = modelRoot;
+
+      // Load the GLB file
+      const result = await SceneLoader.ImportMeshAsync(
+        '',
+        'app:///',
+        model.fileName,
+        scn,
       );
-      setStatus('Cubo piazzato! Toccalo per selezionarlo.');
-    },
-    [selectCube],
-  );
 
-  // ========== STEP 1: Initialize Scene ==========
+      log('INFO', `Modello caricato: ${result.meshes.length} meshes`);
+
+      // Parent all meshes to model root, enable shadows
+      result.meshes.forEach((mesh) => {
+        if (mesh.name === '__root__') {
+          mesh.parent = modelRoot;
+        }
+        mesh.isPickable = true;
+        if (shadowGenRef.current && mesh instanceof Mesh) {
+          shadowGenRef.current.addShadowCaster(mesh);
+        }
+        loadedMeshesRef.current.push(mesh);
+      });
+
+      // ===== NORMALIZE MODEL SCALE =====
+      // Compute world bounding box of all loaded meshes
+      let minVec = new Vector3(Infinity, Infinity, Infinity);
+      let maxVec = new Vector3(-Infinity, -Infinity, -Infinity);
+      result.meshes.forEach(mesh => {
+        mesh.computeWorldMatrix(true);
+        const bi = mesh.getBoundingInfo();
+        if (bi) {
+          const bMin = bi.boundingBox.minimumWorld;
+          const bMax = bi.boundingBox.maximumWorld;
+          minVec = Vector3.Minimize(minVec, bMin);
+          maxVec = Vector3.Maximize(maxVec, bMax);
+        }
+      });
+      const size = maxVec.subtract(minVec);
+      const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+      const normScale = TARGET_MODEL_SIZE / maxDim;
+      modelRoot.scaling = new Vector3(normScale, normScale, normScale);
+      log('INFO', `Scala normalizzata: maxDim=${maxDim.toFixed(3)} → scale=${normScale.toFixed(3)}`);
+
+      setModelLoaded(true);
+      setLoadingModel(false);
+      setShowManipulator(true);
+      setStatus(`${model.name} caricato! Usa i controlli per manipolarlo.`);
+      log('INFO', `Done: ${model.name} caricato con successo`);
+    } catch (error: any) {
+      log('ERROR', `Errore caricamento modello: ${error.message}`);
+      setStatus(`Errore: ${error.message}`);
+      setLoadingModel(false);
+      Alert.alert('Errore', `Impossibile caricare ${model.name}: ${error.message}`);
+    }
+  }, []);
+
+  // ========== INITIALIZE SCENE ==========
   useEffect(() => {
     if (!engine) {
       log('INFO', 'In attesa del motore BabylonJS...');
       return;
     }
+    if (currentScreen !== 'viewer' || !selectedModel) return;
 
     log('INFO', `Motore BabylonJS inizializzato. Platform: ${Platform.OS}`);
 
     try {
       const newScene = new Scene(engine);
-      newScene.clearColor = new Color4(0.15, 0.15, 0.2, 1);
+      newScene.clearColor = new Color4(0.1, 0.1, 0.15, 1);
       sceneRef.current = newScene;
 
+      // Camera
       const cam = new ArcRotateCamera(
         'mainCamera',
         -Math.PI / 2,
-        Math.PI / 2.5,
+        Math.PI / 3,
         3,
-        Vector3.Zero(),
+        new Vector3(0, 0, 0),
         newScene,
       );
       cam.minZ = 0.01;
       cam.wheelDeltaPercentage = 0.01;
       cam.pinchDeltaPercentage = 0.01;
+      cam.lowerRadiusLimit = 0.5;
+      cam.upperRadiusLimit = 20;
       setCamera(cam);
-      log('INFO', 'Camera ArcRotateCamera creata');
+      log('INFO', 'Camera creata');
 
+      // Hemispheric light (ambient)
       const hemiLight = new HemisphericLight('hemiLight', new Vector3(0, 1, 0), newScene);
-      hemiLight.intensity = 0.7;
+      hemiLight.intensity = 0.5;
+      hemiLight.groundColor = new Color3(0.2, 0.2, 0.25);
 
-      const dirLight = new DirectionalLight('dirLight', new Vector3(-1, -2, -1), newScene);
-      dirLight.intensity = 0.5;
+      // Directional light (for shadows)
+      const dirLight = new DirectionalLight('dirLight', new Vector3(-1, -3, -1.5), newScene);
+      dirLight.intensity = 0.8;
+      dirLight.position = new Vector3(3, 6, 3);
+      dirLightRef.current = dirLight;
       log('INFO', 'Luci aggiunte alla scena');
 
+      // Shadow generator
+      const shadowGen = new ShadowGenerator(1024, dirLight);
+      shadowGen.useBlurExponentialShadowMap = true;
+      shadowGen.blurKernel = 32;
+      shadowGen.darkness = 0.4;
+      shadowGenRef.current = shadowGen;
+      log('INFO', 'Shadow generator creato');
+
+      // Root node
       const root = new TransformNode('ARRoot', newScene);
       setRootNode(root);
       rootNodeRef.current = root;
 
-      // Demo cube
-      const demoBox = MeshBuilder.CreateBox('cube_demo', {size: CUBE_SIZE}, newScene);
-      demoBox.position = new Vector3(0, 0, 0.5);
-      demoBox.parent = root;
-      const demoMat = new StandardMaterial('cube_demo_mat', newScene);
-      demoMat.diffuseColor = TEXTURE_PRESETS[0].color.clone();
-      demoMat.specularColor = new Color3(0.3, 0.3, 0.3);
-      demoMat.emissiveColor = Color3.Black();
-      demoBox.material = demoMat;
-      demoBox.isPickable = true;
-      cubesRef.current.push(demoBox);
-      log('INFO', `Cubo demo creato (${CUBE_SIZE * 100}cm, rosso)`);
+      // Shadow-receiving ground
+      const shadowGround = MeshBuilder.CreateGround(
+        'shadowGround',
+        {width: 30, height: 30},
+        newScene,
+      );
+      shadowGround.position.y = GROUND_Y;
+      shadowGround.receiveShadows = true;
+      const shadowGroundMat = new StandardMaterial('shadowGroundMat', newScene);
+      shadowGroundMat.diffuseColor = new Color3(0.3, 0.3, 0.35);
+      shadowGroundMat.specularColor = new Color3(0.1, 0.1, 0.1);
+      shadowGround.material = shadowGroundMat;
+      shadowGround.isPickable = false;
 
-      // Hit-test reticle — a visible torus (ring) lying flat on the ground
+      // Hit-test reticle
       const reticle = MeshBuilder.CreateTorus(
         'hitTestMarker',
         {diameter: 0.20, thickness: 0.015, tessellation: 32},
         newScene,
       );
-      reticle.rotation.x = 0; // torus is already flat
       const reticleMat = new StandardMaterial('hitTestMarkerMat', newScene);
       reticleMat.diffuseColor = new Color3(0, 1, 0);
       reticleMat.emissiveColor = new Color3(0, 1, 0);
@@ -243,80 +455,60 @@ const App = () => {
       reticle.isPickable = false;
       hitTestMarkerRef.current = reticle;
 
-      // ========== POINTER / TAP HANDLER ==========
+      // ========== POINTER / TAP HANDLER (always SELEZIONE) ==========
       newScene.onPointerObservable.add(evtData => {
         if (evtData.type !== PointerEventTypes.POINTERTAP) return;
 
-        const mode = interactionModeRef.current;
-
-        // Try scene.pick first (works in non-AR mode)
-        const px = evtData.event.offsetX || 0;
-        const py = evtData.event.offsetY || 0;
-        const pickResult = newScene.pick(px, py, (mesh) => mesh.name.startsWith('cube_'));
+        // Ray-pick to select placed instances directly
+        const pickResult = newScene.pick(newScene.pointerX, newScene.pointerY);
         if (pickResult?.hit && pickResult.pickedMesh) {
-          log('INFO', `Tap su cubo (pick): ${pickResult.pickedMesh.name} (modo: ${mode})`);
-          selectCube(pickResult.pickedMesh);
-          return;
-        }
-
-        // In AR, scene.pick often fails. Use proximity check near reticle/camera ray.
-        if (xrRef.current && lastHitPosRef.current) {
-          const hitPos = lastHitPosRef.current;
-          const SELECT_RADIUS = 0.35; // meters — generous for 12cm cubes
-          let closestCube: AbstractMesh | null = null;
-          let closestDist = SELECT_RADIUS;
-          for (const cube of cubesRef.current) {
-            if (!cube.isVisible || cube.name === 'cube_demo') continue;
-            const dx = cube.position.x - hitPos.x;
-            const dz = cube.position.z - hitPos.z;
-            const dist = Math.sqrt(dx * dx + dz * dz);
-            if (dist < closestDist) {
-              closestDist = dist;
-              closestCube = cube;
+          // Walk up the parent chain to find the placed instance TransformNode
+          let current: any = pickResult.pickedMesh;
+          let foundInstance: TransformNode | null = null;
+          while (current) {
+            if (current instanceof TransformNode && current.name.startsWith('placed_')) {
+              foundInstance = current;
+              break;
+            }
+            current = current.parent;
+          }
+          if (foundInstance) {
+            selectInstance(foundInstance);
+          } else {
+            // Maybe tapped the preview model root
+            current = pickResult.pickedMesh;
+            while (current) {
+              if (current === modelRootRef.current) {
+                selectInstance(null);
+                setShowManipulator(true);
+                break;
+              }
+              current = current.parent;
+            }
+            if (!foundInstance && current !== modelRootRef.current) {
+              selectInstance(null);
             }
           }
-          if (closestCube) {
-            log('INFO', `Tap su cubo (proximity ${closestDist.toFixed(2)}m): ${closestCube.name} (modo: ${mode})`);
-            selectCube(closestCube);
-            return;
-          }
-        }
-
-        // No cube tapped
-        log('INFO', `Tap su vuoto (modo: ${mode})`);
-
-        // In SELEZIONE mode, deselect on empty tap
-        if (mode === 'SELEZIONE') {
-          selectCube(null);
-          return;
-        }
-
-        // CREAZIONE mode: Place cube at reticle position ONLY
-        if (lastHitPosRef.current && xrRef.current && surfaceDetectedRef.current) {
-          const pos = lastHitPosRef.current.clone();
-          log('INFO', `Piazzamento cubo a reticle: (${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)})`);
-          placeCubeAt(pos, newScene, rootNodeRef.current!);
-        } else if (!xrRef.current) {
-          // Non-AR tap: deselect
-          selectCube(null);
         } else {
-          setStatus('Inquadra il pavimento per piazzare un cubo');
+          selectInstance(null);
         }
       });
-      log('INFO', 'Pointer/Tap listener registrato');
 
       setScene(newScene);
       setSceneReady(true);
-      setStatus('Scena 3D pronta. Premi "Avvia AR" per iniziare.');
-      log('INFO', '\u2705 Scena 3D completamente inizializzata');
+      setStatus('Scena pronta. Caricamento modello...');
+      log('INFO', 'Scena completamente inizializzata');
+
+      // Load the selected model
+      loadModel(selectedModel, newScene);
     } catch (error: any) {
       log('ERROR', `Errore inizializzazione scena: ${error.message}`);
       setStatus(`Errore: ${error.message}`);
     }
-  }, [engine, selectCube, placeCubeAt]);
+  }, [engine, currentScreen, selectedModel, loadModel, selectInstance, placeModelAt]);
 
-  // ========== STEP 2: Toggle AR ==========
-  const toggleAR = useCallback(async () => {
+  // ========== TOGGLE AR/VR ==========
+  const toggleXR = useCallback(async () => {
     if (!scene || !rootNode) {
       log('WARN', 'Scena o rootNode non ancora pronto');
       return;
@@ -324,8 +516,8 @@ const App = () => {
 
     try {
       if (xrSession) {
-        log('INFO', 'Uscita dalla sessione AR...');
-        setStatus('Chiusura AR...');
+        log('INFO', `Uscita dalla sessione ${viewerMode}...`);
+        setStatus(`Chiusura ${viewerMode}...`);
 
         if (hitTestMarkerRef.current) {
           hitTestMarkerRef.current.isVisible = false;
@@ -343,87 +535,155 @@ const App = () => {
           trackingTimerRef.current = null;
         }
 
-        await xrSession.exitXRAsync();
-        log('INFO', '\u2705 Sessione AR terminata');
-        setStatus('AR disattivata. Premi "Avvia AR" per riavviare.');
-
-        // Show demo cube again
-        cubesRef.current.forEach(cube => {
-          if (cube.name === 'cube_demo') {
-            cube.isVisible = true;
+        // Make shadow ground visible again for preview
+        const sg = scene.getMeshByName('shadowGround');
+        if (sg) {
+          sg.isVisible = true;
+          const mat = sg.material as StandardMaterial;
+          if (mat) {
+            mat.alpha = 1;
+            mat.diffuseColor = new Color3(0.3, 0.3, 0.35);
           }
-        });
-      } else {
-        log('INFO', '--- AVVIO AR ---');
-        setStatus('Avvio AR in corso...');
+        }
 
-        log('INFO', 'Creazione XR Experience...');
+        // Re-enable the preview model root
+        if (modelRootRef.current) {
+          modelRootRef.current.setEnabled(true);
+        }
+
+        await xrSession.exitXRAsync();
+        log('INFO', `Sessione ${viewerMode} terminata`);
+        setStatus(`${viewerMode} disattivata.`);
+      } else {
+        const mode = viewerMode;
+        log('INFO', `--- AVVIO ${mode} ---`);
+        setStatus(`Avvio ${mode} in corso...`);
+
         const xr = await scene.createDefaultXRExperienceAsync({
           disableDefaultUI: true,
           disableTeleportation: true,
         });
         xrRef.current = xr;
-        log('INFO', '\u2705 XR Experience creata');
+        log('INFO', 'XR Experience creata');
 
-        log('INFO', "Chiamata enterXRAsync('immersive-ar', 'unbounded')...");
+        const sessionMode = mode === 'AR' ? 'immersive-ar' : 'immersive-vr';
+        const refSpace = mode === 'AR' ? 'unbounded' : 'local-floor';
+
+        log('INFO', `enterXRAsync('${sessionMode}', '${refSpace}')...`);
         const session = await xr.baseExperience.enterXRAsync(
-          'immersive-ar',
-          'unbounded',
+          sessionMode,
+          refSpace,
           xr.renderTarget,
         );
-        log('INFO', '\u2705 Sessione AR avviata con successo!');
+        log('INFO', `Sessione ${mode} avviata`);
 
-        // ====== GROUND PLANE (visible grid so user sees where the floor is) ======
-        const GROUND_Y = groundYRef.current;
-        const ground = MeshBuilder.CreateGround(
-          'virtualGround',
-          {width: 20, height: 20, subdivisions: 40},
-          scene,
-        );
-        ground.position.y = GROUND_Y;
-        const groundMat = new StandardMaterial('groundMat', scene);
-        groundMat.diffuseColor = new Color3(0, 0.6, 0.6);
-        groundMat.emissiveColor = new Color3(0, 0.15, 0.15);
-        groundMat.alpha = 0.15;
-        groundMat.wireframe = true;
-        groundMat.backFaceCulling = false;
-        ground.material = groundMat;
-        ground.isPickable = false;
-        ground.isVisible = true;
-        groundPlaneRef.current = ground;
-        log('INFO', `Piano griglia visibile creato a Y=${GROUND_Y.toFixed(2)}`);
-
-        // Mark surface as detected immediately (ground plane is always there)
-        surfaceDetectedRef.current = true;
-        setSurfaceDetected(true);
-
-        // ====== PER-FRAME: RAYCAST FROM CAMERA CENTER TO GROUND ======
-        xr.baseExperience.sessionManager.onXRFrameObservable.add(() => {
-          if (!hitTestMarkerRef.current || !groundPlaneRef.current) return;
-
-          const cam = xr.baseExperience.camera;
-          if (!cam) return;
-
-          // Get camera world position and forward direction
-          const camForward = cam.getDirection(Vector3.Forward());
-          const camPos = cam.globalPosition.clone();
-
-          // Raycast: find where the forward vector hits the ground plane Y
-          // ground is at GROUND_Y; we solve: camPos.y + t * camForward.y = GROUND_Y
-          if (Math.abs(camForward.y) > 0.001) {
-            const t = (GROUND_Y - camPos.y) / camForward.y;
-            if (t > 0.3 && t < 10) { // Only ahead of camera, reasonable distance
-              const hitX = camPos.x + t * camForward.x;
-              const hitZ = camPos.z + t * camForward.z;
-              const hitPos = new Vector3(hitX, GROUND_Y, hitZ);
-
-              hitTestMarkerRef.current.isVisible = true;
-              hitTestMarkerRef.current.position.set(hitX, GROUND_Y + 0.005, hitZ);
-              lastHitPosRef.current = hitPos;
+        if (mode === 'AR') {
+          // In AR: make shadow ground semi-transparent (just receives shadows)
+          const sg = scene.getMeshByName('shadowGround');
+          if (sg) {
+            const mat = sg.material as StandardMaterial;
+            if (mat) {
+              mat.diffuseColor = new Color3(0.5, 0.5, 0.5);
+              mat.alpha = 0.3;
             }
           }
-        });
-        log('INFO', '\u2705 Raycast pavimento attivo');
+
+          // Hide the preview model so only user-placed copies are visible
+          if (modelRootRef.current) {
+            modelRootRef.current.setEnabled(false);
+          }
+
+          // Wireframe ground grid for AR
+          const grid = MeshBuilder.CreateGround(
+            'arGrid',
+            {width: 20, height: 20, subdivisions: 40},
+            scene,
+          );
+          grid.position.y = GROUND_Y;
+          const gridMat = new StandardMaterial('gridMat', scene);
+          gridMat.diffuseColor = new Color3(0, 0.6, 0.6);
+          gridMat.emissiveColor = new Color3(0, 0.15, 0.15);
+          gridMat.alpha = 0.15;
+          gridMat.wireframe = true;
+          gridMat.backFaceCulling = false;
+          grid.material = gridMat;
+          grid.isPickable = false;
+          groundPlaneRef.current = grid;
+          surfaceDetectedRef.current = true;
+          setSurfaceDetected(true);
+
+          // Per-frame camera raycast to ground
+          xr.baseExperience.sessionManager.onXRFrameObservable.add(() => {
+            if (!hitTestMarkerRef.current) return;
+            const cam = xr.baseExperience.camera;
+            if (!cam) return;
+            const camForward = cam.getDirection(Vector3.Forward());
+            const camPos = cam.globalPosition.clone();
+            if (Math.abs(camForward.y) > 0.001) {
+              const t = (GROUND_Y - camPos.y) / camForward.y;
+              if (t > 0.3 && t < 10) {
+                const hitX = camPos.x + t * camForward.x;
+                const hitZ = camPos.z + t * camForward.z;
+                hitTestMarkerRef.current.isVisible = true;
+                hitTestMarkerRef.current.position.set(hitX, GROUND_Y + 0.005, hitZ);
+                lastHitPosRef.current = new Vector3(hitX, GROUND_Y, hitZ);
+              }
+            }
+          });
+        } else if (mode === 'VR') {
+          // Hide the preview model so only user-placed copies are visible
+          if (modelRootRef.current) {
+            modelRootRef.current.setEnabled(false);
+          }
+
+          // Make ground semi-transparent in VR
+          const sg = scene.getMeshByName('shadowGround');
+          if (sg) {
+            const mat = sg.material as StandardMaterial;
+            if (mat) {
+              mat.diffuseColor = new Color3(0.15, 0.15, 0.2);
+              mat.alpha = 0.85;
+            }
+          }
+
+          // VR grid for spatial reference
+          const vrGrid = MeshBuilder.CreateGround(
+            'arGrid',
+            {width: 30, height: 30, subdivisions: 60},
+            scene,
+          );
+          vrGrid.position.y = GROUND_Y;
+          const vrGridMat = new StandardMaterial('vrGridMat', scene);
+          vrGridMat.diffuseColor = new Color3(0.3, 0.3, 0.5);
+          vrGridMat.emissiveColor = new Color3(0.05, 0.05, 0.15);
+          vrGridMat.alpha = 0.25;
+          vrGridMat.wireframe = true;
+          vrGridMat.backFaceCulling = false;
+          vrGrid.material = vrGridMat;
+          vrGrid.isPickable = false;
+          groundPlaneRef.current = vrGrid;
+          surfaceDetectedRef.current = true;
+          setSurfaceDetected(true);
+
+          // Per-frame camera raycast to ground (same as AR) for reticle + placement
+          xr.baseExperience.sessionManager.onXRFrameObservable.add(() => {
+            if (!hitTestMarkerRef.current) return;
+            const cam = xr.baseExperience.camera;
+            if (!cam) return;
+            const camForward = cam.getDirection(Vector3.Forward());
+            const camPos = cam.globalPosition.clone();
+            if (Math.abs(camForward.y) > 0.001) {
+              const t = (GROUND_Y - camPos.y) / camForward.y;
+              if (t > 0.3 && t < 10) {
+                const hitX = camPos.x + t * camForward.x;
+                const hitZ = camPos.z + t * camForward.z;
+                hitTestMarkerRef.current.isVisible = true;
+                hitTestMarkerRef.current.position.set(hitX, GROUND_Y + 0.005, hitZ);
+                lastHitPosRef.current = new Vector3(hitX, GROUND_Y, hitZ);
+              }
+            }
+          });
+        }
 
         setXrSession(session);
 
@@ -437,99 +697,178 @@ const App = () => {
             clearTimeout(trackingTimerRef.current);
             trackingTimerRef.current = null;
           }
-          setStatus('AR terminata. Premi "Avvia AR" per riavviare.');
+          setStatus(`${mode} terminata.`);
         });
 
+        // Tracking state
         const xrCam = xr.baseExperience.camera;
-        log('INFO', `Tracking state iniziale: ${WebXRTrackingState[xrCam.trackingState]}`);
-
-        // Debounced tracking state
         xrCam.onTrackingStateChanged.add(newState => {
           if (newState === lastTrackingRef.current) return;
-          if (trackingTimerRef.current) {
-            clearTimeout(trackingTimerRef.current);
-          }
+          if (trackingTimerRef.current) clearTimeout(trackingTimerRef.current);
           trackingTimerRef.current = setTimeout(() => {
             if (newState !== lastTrackingRef.current) {
               lastTrackingRef.current = newState;
               setTrackingState(newState);
-              log('INFO', `Tracking state stabile: ${WebXRTrackingState[newState]}`);
             }
           }, 500);
         });
 
-        // Set initial as TRACKING after a short delay
         setTimeout(() => {
           if (lastTrackingRef.current === null) {
             lastTrackingRef.current = WebXRTrackingState.TRACKING;
             setTrackingState(WebXRTrackingState.TRACKING);
-            log('INFO', 'Tracking state impostato a TRACKING (default iniziale)');
           }
         }, 2000);
 
-        // Hide demo cube in AR
-        cubesRef.current.forEach(cube => {
-          if (cube.name === 'cube_demo') {
-            cube.isVisible = false;
-          }
-        });
-
-        setStatus('AR ATTIVA! La griglia indica il pavimento. Punta in basso e tocca per piazzare.');
-        log('INFO', '=== AR COMPLETAMENTE OPERATIVA ===');
+        setStatus(`${mode} ATTIVA! Usa i controlli per manipolare il modello.`);
+        log('INFO', `=== ${mode} COMPLETAMENTE OPERATIVA ===`);
       }
     } catch (error: any) {
-      log('ERROR', `Errore AR: ${error.message}\n${error.stack || ''}`);
-      setStatus(`Errore AR: ${error.message}`);
+      log('ERROR', `Errore ${viewerMode}: ${error.message}\n${error.stack || ''}`);
+      setStatus(`Errore ${viewerMode}: ${error.message}`);
       setXrSession(undefined);
       Alert.alert(
-        'Errore AR',
-        `Impossibile avviare la sessione AR:\n${error.message}\n\nAssicurati che ARCore/ARKit sia installato e che i permessi della fotocamera siano concessi.`,
+        `Errore ${viewerMode}`,
+        `Impossibile avviare la sessione ${viewerMode}:\n${error.message}`,
       );
     }
-  }, [scene, rootNode, xrSession]);
+  }, [scene, rootNode, xrSession, viewerMode]);
 
-  // ========== STEP 3: Change Texture (selected cube only) ==========
-  const changeTexture = useCallback(
-    (index: number) => {
-      if (!scene) return;
-      setSelectedTexture(index);
-      selectedTextureRef.current = index;
-      const preset = TEXTURE_PRESETS[index];
 
-      if (selectedCubeRef.current) {
-        const mat = selectedCubeRef.current.material as StandardMaterial | null;
-        if (mat) {
-          mat.diffuseColor = preset.color.clone();
-          mat.alpha = preset.alpha;
+  // Auto-start XR when the scene and model are ready
+  useEffect(() => {
+    if (sceneReady && modelLoaded && !xrSession) {
+      // small delay to let the scene settle
+      const t = setTimeout(() => {
+        if (!xrSession) {
+          toggleXR().catch((e) => log('ERROR', `Auto-start XR failed: ${e?.message || e}`));
         }
-        log('INFO', `Texture "${preset.name}" applicata a: ${selectedCubeRef.current.name}`);
-        setStatus(`Texture "${preset.name}" applicata a ${selectedCubeRef.current.name}`);
-      } else {
-        log('WARN', 'Nessun cubo selezionato!');
-        setStatus('\u26A0\uFE0F Seleziona un cubo prima di cambiare la texture!');
-      }
-    },
-    [scene],
-  );
-
-  // ========== STEP 5: Remove Selected Cube ==========
-  const removeSelectedCube = useCallback(() => {
-    const cube = selectedCubeRef.current;
-    if (!cube || cube.name === 'cube_demo') {
-      log('WARN', 'Nessun cubo selezionato da rimuovere');
-      setStatus('Seleziona un cubo prima di rimuoverlo');
-      return;
+      }, 300);
+      return () => clearTimeout(t);
     }
-    const cubeName = cube.name;
-    cube.dispose();
-    cubesRef.current = cubesRef.current.filter(c => c !== cube);
-    selectCube(null);
-    setObjectsPlaced(prev => Math.max(0, prev - 1));
-    log('INFO', `Rimosso cubo: ${cubeName}`);
-    setStatus(`Cubo "${cubeName}" rimosso.`);
-  }, [selectCube]);
+  }, [sceneReady, modelLoaded, xrSession, toggleXR]);
 
-  // ========== RENDER ==========
+  // ========== BACK TO GALLERY ==========
+  const goBackToGallery = useCallback(async () => {
+    // Exit XR if active
+    if (xrSession) {
+      try {
+        await xrSession.exitXRAsync();
+      } catch (e) {}
+    }
+
+    // Dispose loaded meshes
+    loadedMeshesRef.current.forEach(m => {
+      try { m.dispose(); } catch (e) {}
+    });
+    loadedMeshesRef.current = [];
+    if (modelRootRef.current) {
+      try { modelRootRef.current.dispose(); } catch (e) {}
+      modelRootRef.current = null;
+    }
+
+    // Dispose scene
+    if (sceneRef.current) {
+      try { sceneRef.current.dispose(); } catch (e) {}
+      sceneRef.current = null;
+    }
+
+    // Reset state
+    setScene(undefined);
+    setCamera(undefined);
+    setRootNode(undefined);
+    setXrSession(undefined);
+    setTrackingState(undefined);
+    setSceneReady(false);
+    setModelLoaded(false);
+    setLoadingModel(false);
+    setShowManipulator(false);
+    setManipProperty(null);
+    setSurfaceDetected(false);
+    setSelectedInstance(null);
+    selectedInstanceRef.current = null;
+    setObjectsPlaced(0);
+    placedInstancesRef.current.forEach(n => {
+      try { n.getChildMeshes().forEach(m => m.dispose()); n.dispose(); } catch(e) {}
+    });
+    placedInstancesRef.current = [];
+    xrRef.current = null;
+    shadowGenRef.current = null;
+    dirLightRef.current = null;
+    groundPlaneRef.current = null;
+    hitTestMarkerRef.current = null;
+
+    setSelectedModel(null);
+    setCurrentScreen('gallery');
+    setStatus('Inizializzazione motore 3D...');
+    log('INFO', 'Tornato alla galleria');
+  }, [xrSession]);
+
+  // ========== SELECT MODEL FROM GALLERY ==========
+  const openModel = useCallback((model: ModelData, mode: ViewerMode) => {
+    log('INFO', `Selezionato modello: ${model.name} (${mode})`);
+    setLoadingModel(true); // show loading overlay immediately to avoid flash
+    setSelectedModel(model);
+    setViewerMode(mode);
+    setCurrentScreen('viewer');
+  }, []);
+
+  // ========== CREATE AT CENTER (reticle position) ==========
+  const createAtCenter = useCallback(() => {
+    if (!sceneRef.current || !selectedModel) return;
+    const hitPos = lastHitPosRef.current;
+    if (hitPos && surfaceDetectedRef.current) {
+      placeModelAt(hitPos, sceneRef.current, selectedModel);
+    } else {
+      log('WARN', 'Nessuna posizione reticle disponibile per il piazzamento');
+      setStatus('Punta la camera verso il pavimento per piazzare!');
+    }
+  }, [selectedModel, placeModelAt]);
+
+  // ========== GALLERY SCREEN ==========
+  if (currentScreen === 'gallery') {
+    return (
+      <SafeAreaView style={styles.galleryContainer}>
+        <View style={styles.galleryHeader}>
+          <Text style={styles.galleryTitle}>Galleria Modelli 3D</Text>
+          <Text style={styles.gallerySubtitle}>
+            Scegli un modello e visualizzalo in AR o VR
+          </Text>
+        </View>
+
+        <FlatList
+          data={AR_MODELS}
+          numColumns={2}
+          contentContainerStyle={styles.galleryList}
+          columnWrapperStyle={styles.galleryRow}
+          keyExtractor={item => item.id}
+          renderItem={({item}) => (
+            <View style={styles.modelCard}>
+              <View style={styles.modelThumbnail}>
+                <Text style={styles.modelEmoji}>{item.thumbnail}</Text>
+              </View>
+              <Text style={styles.modelName}>{item.name}</Text>
+              <Text style={styles.modelDesc}>{item.description}</Text>
+              <View style={styles.modelActions}>
+                <TouchableOpacity
+                  style={styles.arActionBtn}
+                  onPress={() => openModel(item, 'AR')}>
+                  <Text style={styles.actionBtnText}>AR</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.vrActionBtn}
+                  onPress={() => openModel(item, 'VR')}>
+                  <Text style={styles.actionBtnText}>VR</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // ========== VIEWER SCREEN ==========
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.sceneContainer}>
@@ -540,8 +879,29 @@ const App = () => {
           antiAliasing={2}
         />
 
+        {/* Loading overlay */}
+        {loadingModel && (
+          <View style={styles.loadingOverlay}>
+            <ActivityIndicator size="large" color="#4FC3F7" />
+            <Text style={styles.loadingText}>
+              Caricamento {selectedModel?.name}...
+            </Text>
+          </View>
+        )}
+
         {/* Status bar */}
         <View style={styles.statusBar}>
+          <View style={styles.statusRow}>
+            <TouchableOpacity style={styles.backButton} onPress={goBackToGallery}>
+              <Text style={styles.backButtonText}>Galleria</Text>
+            </TouchableOpacity>
+            <Text style={styles.modelTitle} numberOfLines={1}>
+              {selectedModel?.name || ''}
+            </Text>
+            <View style={styles.modeBadge}>
+              <Text style={styles.modeBadgeText}>{viewerMode}</Text>
+            </View>
+          </View>
           <Text style={styles.statusText}>{status}</Text>
           {trackingState !== undefined && (
             <Text
@@ -561,104 +921,129 @@ const App = () => {
           )}
         </View>
 
-        {/* Info overlay */}
-        <View style={styles.infoBar}>
-          <Text style={styles.infoText}>
-            {'📐 Superficie: '}{surfaceDetected ? '✅ Rilevata' : '⏳ Ricerca...'}{' | 📦 Cubi: '}{cubesRef.current.length}{' (+'}{objectsPlaced}{' piazzati)'}
-          </Text>
-          <Text style={styles.infoText}>
-            {'🎯 Selezionato: '}{selectedCube?.name || 'Nessuno'}{' | Modo: '}{interactionMode}
-          </Text>
-          <Text style={styles.infoText}>
-            {'📱 '}{Platform.OS === 'android' ? 'ARCore' : 'ARKit'}{' | BabylonJS 6.14.0'}
-          </Text>
-        </View>
+        {/* Info overlay (AR & VR) */}
+        {xrSession && (
+          <View style={styles.infoBar}>
+            <Text style={styles.infoText}>
+              {viewerMode === 'AR' ? `Superficie: ${surfaceDetected ? 'Rilevata' : 'Ricerca...'}` : 'VR'}{' | Piazzati: '}{objectsPlaced}
+            </Text>
+            <Text style={styles.infoText}>
+              {'Selezionato: '}{selectedInstance?.name || 'Nessuno'}
+            </Text>
+          </View>
+        )}
 
-        {/* Main controls: AR left, Switch center, Rimuovi right */}
+        {/* Bottom controls */}
         <View style={styles.controls}>
           <TouchableOpacity
             style={[
-              styles.arButton,
-              xrSession ? styles.arButtonActive : styles.arButtonInactive,
-              !sceneReady && styles.arButtonDisabled,
+              styles.xrButton,
+              styles.xrButtonActive,
+              (!sceneReady || loadingModel) && styles.xrButtonDisabled,
             ]}
-            onPress={toggleAR}
-            disabled={!sceneReady}>
-            <Text style={styles.arButtonText}>
-              {!sceneReady
-                ? 'Caricamento...'
-                : xrSession
-                  ? 'Ferma AR'
-                  : 'Avvia AR'}
+            onPress={goBackToGallery}
+            disabled={!sceneReady || loadingModel}>
+            <Text style={styles.xrButtonText}>
+              {!sceneReady || loadingModel ? '⏳' : '⬅️'}
             </Text>
           </TouchableOpacity>
 
-          <View style={styles.modeToggleContainer}>
-            <Text style={[styles.modeLabel, interactionMode === 'SELEZIONE' && styles.modeLabelActive]}>
-              {'SEL'}
-            </Text>
-            <Switch
-              value={interactionMode === 'CREAZIONE'}
-              onValueChange={(isCreazione) => {
-                const newMode = isCreazione ? 'CREAZIONE' : 'SELEZIONE';
-                setInteractionMode(newMode);
-                interactionModeRef.current = newMode;
-                log('INFO', `Modalità cambiata: ${newMode}`);
-                setStatus(newMode === 'CREAZIONE' ? 'Modalità CREAZIONE: tocca per piazzare cubi' : 'Modalità SELEZIONE: tocca un cubo per selezionarlo');
-              }}
-              trackColor={{false: '#9C27B0', true: '#4CAF50'}}
-              thumbColor={interactionMode === 'CREAZIONE' ? '#8BC34A' : '#CE93D8'}
-            />
-            <Text style={[styles.modeLabel, interactionMode === 'CREAZIONE' && styles.modeLabelActive]}>
-              {'CREA'}
-            </Text>
-          </View>
-
-          {selectedCube && selectedCube.name !== 'cube_demo' ? (
-            <TouchableOpacity style={styles.clearButton} onPress={removeSelectedCube}>
-              <Text style={styles.clearButtonText}>Rimuovi</Text>
+          {/* Create button (place at reticle) */}
+          {xrSession && (
+            <TouchableOpacity
+              style={styles.createBtn}
+              onPress={createAtCenter}>
+              <Text style={styles.createBtnText}>{'➕'}</Text>
             </TouchableOpacity>
-          ) : (
-            <View style={styles.clearButtonPlaceholder} />
+          )}
+
+          {/* Rimuovi & Texture buttons */}
+          {xrSession && selectedInstance && (
+            <View style={styles.instanceActionsRow}>
+              <TouchableOpacity style={styles.actionBtnEqual} onPress={removeSelectedInstance}>
+                <Text style={styles.iconBtnText}>{'🗑️'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionBtnEqual, styles.textureBtnBg]}
+                onPress={() => {
+                  refreshMeshList();
+                  setShowTexturePanel(prev => !prev);
+                }}>
+                <Text style={styles.iconBtnText}>{'🎨'}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Texture button when NO instance selected but model loaded */}
+          {modelLoaded && !selectedInstance && (
+            <TouchableOpacity
+              style={[styles.actionBtnEqual, styles.textureBtnBg]}
+              onPress={() => {
+                refreshMeshList(modelRootRef.current);
+                setShowTexturePanel(prev => !prev);
+              }}>
+              <Text style={styles.iconBtnText}>{'🎨'}</Text>
+            </TouchableOpacity>
           )}
         </View>
 
-        {/* Texture selector */}
-        <View style={styles.textureBar}>
-          <Text style={styles.textureLabelText}>
-            Texture{selectedCube ? ` (${selectedCube.name})` : ' (nessuno)'}:
-          </Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {TEXTURE_PRESETS.map((preset, idx) => (
-              <TouchableOpacity
-                key={idx}
-                style={[
-                  styles.textureButton,
-                  {
-                    backgroundColor: `rgb(${Math.floor(preset.color.r * 255)},${Math.floor(preset.color.g * 255)},${Math.floor(preset.color.b * 255)})`,
-                    borderWidth: selectedTexture === idx ? 3 : 1,
-                    borderColor: selectedTexture === idx ? '#ffffff' : '#666666',
-                    opacity: !selectedCube ? 0.4 : preset.alpha < 1 ? 0.6 : 1,
-                  },
-                ]}
-                onPress={() => changeTexture(idx)}
-                disabled={!selectedCube}>
-                <Text style={styles.textureButtonText}>{preset.name}</Text>
+        {/* Texture selection panel */}
+        {showTexturePanel && meshListForTexture.length > 0 && (
+          <View style={styles.texturePanel}>
+            <View style={styles.texturePanelHeader}>
+              <Text style={styles.texturePanelTitle}>Cambia Texture</Text>
+              <TouchableOpacity onPress={() => setShowTexturePanel(false)}>
+                <Text style={styles.texturePanelClose}>✕</Text>
               </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
+            </View>
+
+            {/* Mesh selector */}
+            <View style={styles.meshSelectorRow}>
+              <TouchableOpacity
+                style={styles.meshNavBtn}
+                onPress={() => setSelectedMeshIdx(prev => Math.max(0, prev - 1))}>
+                <Text style={styles.meshNavBtnText}>◀</Text>
+              </TouchableOpacity>
+              <Text style={styles.meshNameText} numberOfLines={1}>
+                {meshListForTexture[selectedMeshIdx]?.name || '?'}
+              </Text>
+              <Text style={styles.meshCountText}>
+                {selectedMeshIdx + 1}/{meshListForTexture.length}
+              </Text>
+              <TouchableOpacity
+                style={styles.meshNavBtn}
+                onPress={() => setSelectedMeshIdx(prev => Math.min(meshListForTexture.length - 1, prev + 1))}>
+                <Text style={styles.meshNavBtnText}>▶</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Presets grid */}
+            <View style={styles.presetGrid}>
+              {TEXTURE_PRESETS.map((p, i) => (
+                <TouchableOpacity
+                  key={i}
+                  style={[
+                    styles.presetBtn,
+                    p.color ? {backgroundColor: `rgb(${Math.round(p.color.r*255)},${Math.round(p.color.g*255)},${Math.round(p.color.b*255)})`} : styles.presetOriginalBg,
+                  ]}
+                  onPress={() => applyMaterialPreset(i)}>
+                  <Text style={[styles.presetBtnText, p.color && (p.color.r + p.color.g + p.color.b) > 1.5 ? {color: '#000'} : {}]}>{p.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
 
         {/* Manipulation panel */}
-        {showManipulator && selectedCube && (
+        {showManipulator && modelLoaded && (
           <View style={styles.manipulatorPanel}>
-            {/* Row 1: property selector buttons */}
             {!manipProperty && (
               <View style={styles.manipBtnRow}>
                 {[
                   {key: 'scala', label: 'Scala'},
                   {key: 'rotX', label: 'Rot X'},
                   {key: 'rotY', label: 'Rot Y'},
+                  {key: 'posY', label: 'Alt Y'},
                 ].map(item => (
                   <TouchableOpacity
                     key={item.key}
@@ -667,25 +1052,26 @@ const App = () => {
                     <Text style={styles.manipPropBtnText}>{item.label}</Text>
                   </TouchableOpacity>
                 ))}
-                <TouchableOpacity style={styles.deselectBtn} onPress={() => selectCube(null)}>
-                  <Text style={styles.deselectBtnText}>{'✖'}</Text>
-                </TouchableOpacity>
               </View>
             )}
-            {/* Row when a property IS selected: show - / label / + / ✖ */}
             {manipProperty && (
               <View style={styles.manipActiveRow}>
                 <TouchableOpacity
                   style={styles.manipStepBtn}
                   onPress={() => manipStep(manipProperty, -1)}>
-                  <Text style={styles.manipStepBtnText}>{' − '}</Text>
+                  <Text style={styles.manipStepBtnText}>{' - '}</Text>
                 </TouchableOpacity>
                 <Text style={styles.manipActiveLabel}>
-                  {manipProperty === 'scala'
-                    ? `Scala ${((selectedCube?.scaling?.x || 1) * 100).toFixed(0)}%`
-                    : manipProperty === 'rotX'
-                      ? `Rot X ${(((selectedCube?.rotation?.x || 0) * 180) / Math.PI).toFixed(0)}°`
-                      : `Rot Y ${(((selectedCube?.rotation?.y || 0) * 180) / Math.PI).toFixed(0)}°`}
+                  {(() => {
+                    const t = selectedInstanceRef.current || modelRootRef.current;
+                    if (manipProperty === 'scala')
+                      return `Scala ${((t?.scaling?.x || 1) * 100).toFixed(0)}%`;
+                    if (manipProperty === 'rotX')
+                      return `Rot X ${(((t?.rotation?.x || 0) * 180) / Math.PI).toFixed(0)} deg`;
+                    if (manipProperty === 'rotY')
+                      return `Rot Y ${(((t?.rotation?.y || 0) * 180) / Math.PI).toFixed(0)} deg`;
+                    return `Alt Y ${(t?.position?.y || 0).toFixed(2)}m`;
+                  })()}
                 </Text>
                 <TouchableOpacity
                   style={styles.manipStepBtn}
@@ -695,13 +1081,12 @@ const App = () => {
                 <TouchableOpacity
                   style={styles.deselectBtn}
                   onPress={() => setManipProperty(null)}>
-                  <Text style={styles.deselectBtnText}>{'✖'}</Text>
+                  <Text style={styles.deselectBtnText}>{'X'}</Text>
                 </TouchableOpacity>
               </View>
             )}
           </View>
         )}
-
       </View>
     </SafeAreaView>
   );
@@ -709,6 +1094,91 @@ const App = () => {
 
 // ================= STYLES =================
 const styles = StyleSheet.create({
+  // Gallery styles
+  galleryContainer: {
+    flex: 1,
+    backgroundColor: '#0d1117',
+  },
+  galleryHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 20,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#21262d',
+  },
+  galleryTitle: {
+    fontSize: 26,
+    fontWeight: 'bold',
+    color: '#f0f6fc',
+    marginBottom: 4,
+  },
+  gallerySubtitle: {
+    fontSize: 14,
+    color: '#8b949e',
+  },
+  galleryList: {
+    padding: 12,
+  },
+  galleryRow: {
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  modelCard: {
+    width: CARD_WIDTH,
+    backgroundColor: '#161b22',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#30363d',
+  },
+  modelThumbnail: {
+    width: '100%',
+    height: 80,
+    backgroundColor: '#21262d',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  modelEmoji: {
+    fontSize: 40,
+  },
+  modelName: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#f0f6fc',
+    marginBottom: 2,
+  },
+  modelDesc: {
+    fontSize: 11,
+    color: '#8b949e',
+    marginBottom: 8,
+  },
+  modelActions: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  arActionBtn: {
+    flex: 1,
+    backgroundColor: '#238636',
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  vrActionBtn: {
+    flex: 1,
+    backgroundColor: '#1f6feb',
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  actionBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+
+  // Viewer styles
   container: {
     flex: 1,
     backgroundColor: '#000',
@@ -719,28 +1189,111 @@ const styles = StyleSheet.create({
   engineView: {
     flex: 1,
   },
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  loadingText: {
+    color: '#4FC3F7',
+    fontSize: 16,
+    marginTop: 12,
+    fontWeight: 'bold',
+  },
   statusBar: {
     position: 'absolute',
     top: 10,
     left: 10,
     right: 10,
-    backgroundColor: 'rgba(0,0,0,0.75)',
+    backgroundColor: 'rgba(0,0,0,0.8)',
     padding: 10,
     borderRadius: 8,
   },
-  statusText: {
-    color: '#ffffff',
-    fontSize: 14,
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  backButton: {
+    backgroundColor: '#30363d',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  backButtonText: {
+    color: '#58a6ff',
+    fontSize: 12,
     fontWeight: 'bold',
   },
-  trackingText: {
+  modelTitle: {
+    flex: 1,
+    color: '#f0f6fc',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  modeBadge: {
+    backgroundColor: '#238636',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  modeBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  statusText: {
+    color: '#ffffff',
     fontSize: 12,
+  },
+  trackingText: {
+    fontSize: 11,
     fontWeight: '600',
-    marginTop: 4,
+    marginTop: 2,
+  },
+  controls: {
+    position: 'absolute',
+    bottom: 70,
+    left: 10,
+    right: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  xrButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 25,
+    elevation: 5,
+    minWidth: 90,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  xrButtonInactive: {
+    backgroundColor: '#2196F3',
+  },
+  xrButtonActive: {
+    backgroundColor: '#f44336',
+  },
+  xrButtonDisabled: {
+    backgroundColor: '#555555',
+    opacity: 0.6,
+  },
+  xrButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   infoBar: {
     position: 'absolute',
-    top: 80,
+    top: 110,
     left: 10,
     right: 10,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -751,103 +1304,120 @@ const styles = StyleSheet.create({
     color: '#cccccc',
     fontSize: 11,
   },
-  controls: {
+  createBtn: {
+    backgroundColor: '#4CAF50',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 5,
+  },
+  createBtnText: {
+    fontSize: 22,
+  },
+  instanceActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionBtnEqual: {
+    backgroundColor: '#ff9800',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 25,
+    minWidth: 90,
+    alignItems: 'center',
+  },
+  actionBtnEqualText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  iconBtnText: {
+    fontSize: 20,
+  },
+  textureBtnBg: {
+    backgroundColor: '#7B1FA2',
+  },
+  texturePanel: {
     position: 'absolute',
-    bottom: 120,
+    bottom: 130,
     left: 10,
     right: 10,
+    backgroundColor: 'rgba(10,0,30,0.92)',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#7B1FA2',
+  },
+  texturePanelHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 8,
   },
-  arButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 25,
-    elevation: 5,
-    minWidth: 100,
-    alignItems: 'center',
-  },
-  arButtonInactive: {
-    backgroundColor: '#2196F3',
-  },
-  arButtonActive: {
-    backgroundColor: '#f44336',
-  },
-  arButtonDisabled: {
-    backgroundColor: '#555555',
-    opacity: 0.6,
-  },
-  arButtonText: {
-    color: '#fff',
+  texturePanelTitle: {
+    color: '#CE93D8',
     fontSize: 14,
     fontWeight: 'bold',
   },
-  clearButton: {
-    backgroundColor: '#ff9800',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 25,
-    minWidth: 100,
-    alignItems: 'center',
-  },
-  clearButtonText: {
-    color: '#fff',
-    fontSize: 14,
+  texturePanelClose: {
+    color: '#CE93D8',
+    fontSize: 18,
     fontWeight: 'bold',
-  },
-  modeToggleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)',
     paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 25,
-    gap: 4,
   },
-  modeLabel: {
-    color: '#888',
-    fontSize: 11,
-    fontWeight: 'bold',
-  },
-  modeLabelActive: {
-    color: '#fff',
-  },
-
-  textureBar: {
-    position: 'absolute',
-    bottom: 60,
-    left: 10,
-    right: 10,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    padding: 8,
-    borderRadius: 8,
+  meshSelectorRow: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  textureLabelText: {
-    color: '#fff',
-    fontSize: 11,
-    marginRight: 6,
-    fontWeight: 'bold',
-    maxWidth: 110,
-  },
-  textureButton: {
-    paddingHorizontal: 12,
+    marginBottom: 8,
+    backgroundColor: 'rgba(123,31,162,0.25)',
+    borderRadius: 8,
     paddingVertical: 6,
-    borderRadius: 15,
-    marginHorizontal: 3,
+    paddingHorizontal: 4,
   },
-  textureButtonText: {
+  meshNavBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  meshNavBtnText: {
+    color: '#CE93D8',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  meshNameText: {
+    flex: 1,
+    color: '#f0f6fc',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  meshCountText: {
+    color: '#8b949e',
+    fontSize: 11,
+    marginRight: 4,
+  },
+  presetGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    justifyContent: 'center',
+  },
+  presetBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    minWidth: 68,
+    alignItems: 'center',
+  },
+  presetOriginalBg: {
+    backgroundColor: '#30363d',
+  },
+  presetBtnText: {
     color: '#fff',
     fontSize: 11,
     fontWeight: 'bold',
-    textShadowColor: '#000',
-    textShadowOffset: {width: 1, height: 1},
-    textShadowRadius: 2,
-  },
-  clearButtonPlaceholder: {
-    minWidth: 100,
   },
   manipulatorPanel: {
     position: 'absolute',
@@ -900,7 +1470,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 14,
     fontWeight: 'bold',
-    minWidth: 110,
+    minWidth: 120,
     textAlign: 'center',
   },
   deselectBtn: {
@@ -915,7 +1485,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
   },
-
 });
 
 export default App;
