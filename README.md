@@ -6,7 +6,7 @@ A cross-platform mobile application demonstrating the power of **Babylon Native*
 
 * **Hybrid Viewer**: Seamlessly toggle between **Augmented Reality** (ARCore/ARKit) and a generated **Virtual Reality** world.
 * **Plane Detection**: Automatically detects horizontal and vertical surfaces for placing 3D objects.
-* **Model Manipulation**: Select, move, rotate, and scale glTF models using touch gestures.
+* **Model Manipulation**: Select, move, rotate, and scale .glb models using touch gestures.
 * **Runtime Customization**: Edit textures and materials of placed objects in real-time.
 * **Geo-Lighting**: Calculates the sun's position based on your device's **GPS coordinates** and **Compass heading** for realistic lighting.
 
