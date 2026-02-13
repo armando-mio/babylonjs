@@ -1,17 +1,23 @@
-import React from 'react';
+import React, {useState} from 'react';
 import {
   SafeAreaView,
   View,
   Text,
   TouchableOpacity,
   ActivityIndicator,
+  ScrollView // Aggiunto per le card texture
 } from 'react-native';
 import {EngineView} from '@babylonjs/react-native';
 import {Camera, WebXRTrackingState, AbstractMesh, TransformNode} from '@babylonjs/core';
+import {
+  ArrowLeft, Palette, Trash2, SlidersHorizontal, Plus, X, Rotate3d, Move
+} from 'lucide-react-native';
+
 import {ModelData} from '../../modelsData';
 import {MeshListEntry} from '../types';
 import {TEXTURE_PRESETS, MATERIAL_PRESETS} from '../constants';
 import {styles} from '../styles';
+import {MarqueeText} from './GalleryScreen';
 
 interface ViewerUIProps {
   camera: Camera | undefined;
@@ -47,6 +53,7 @@ interface ViewerUIProps {
   goBackToGallery: () => void;
   createAtCenter: () => void;
   removeSelectedInstance: () => void;
+  toggleManipulator?: () => void; 
 }
 
 export const ViewerUI: React.FC<ViewerUIProps> = ({
@@ -84,10 +91,36 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
   createAtCenter,
   removeSelectedInstance,
 }) => {
-  // Derive the current source name for visual grouping in the texture panel
-  const currentSourceName = meshListForTexture[selectedMeshIdx]?.sourceName || '';
-  const prevSourceName = selectedMeshIdx > 0 ? meshListForTexture[selectedMeshIdx - 1]?.sourceName : null;
-  const showSourceDivider = currentSourceName !== prevSourceName;
+  // Stato locale per evidenziare il preset attivo (per il bordo viola)
+  const [activePresetIndex, setActivePresetIndex] = useState<number | null>(null);
+
+  // MODIFICATO: Logica apertura Dimensioni (chiude Aspetto)
+  const handleToggleManipulator = () => {
+    if (!selectedInstance) return;
+    setShowTexturePanel(false); // Chiude l'altro pannello
+    setManipProperty(null); 
+    setManipProperty('scala');
+  };
+
+  // MODIFICATO: Logica apertura Aspetto (chiude Dimensioni)
+  const handleToggleTexture = () => {
+    refreshMeshList();
+    setManipProperty(null); // Chiude l'altro pannello
+    setShowTexturePanel((prev: boolean) => !prev);
+    setActivePresetIndex(null); // Reset selezione visiva
+  };
+
+  // Applicazione preset con aggiornamento stato locale
+  const handleApplyPreset = (i: number) => {
+    setActivePresetIndex(i);
+    if (textureTab === 'texture') {
+      applyTexturePreset(i);
+    } else {
+      applyMaterialStylePreset(i);
+    }
+  };
+
+  const hasSelection = !!selectedInstance;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -95,65 +128,40 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
         <EngineView
           style={styles.engineView}
           camera={camera}
-          displayFrameRate={true}
+          displayFrameRate={false} 
           antiAliasing={2}
         />
 
-        {/* Loading overlay */}
         {loadingModel && (
           <View style={styles.loadingOverlay}>
-            <ActivityIndicator size="large" color="#4FC3F7" />
-            <Text style={styles.loadingText}>
-              Caricamento {selectedModel?.name}...
-            </Text>
+            <ActivityIndicator size="large" color="#3b82f6" />
+            <Text style={styles.loadingText}>Caricamento...</Text>
           </View>
         )}
 
-        {/* Status bar */}
         <View style={styles.statusBar}>
-          <View style={styles.statusRow}>
+          <View style={styles.statusLeft}>
             <TouchableOpacity style={styles.backButton} onPress={goBackToGallery}>
-              <Text style={styles.backButtonText}>Galleria</Text>
+              <ArrowLeft color="#fff" size={20} />
             </TouchableOpacity>
-            <Text style={styles.modelTitle} numberOfLines={1}>
-              {selectedModel?.name || ''}
-            </Text>
+            <View style={{flex: 1}}>
+                 <MarqueeText text={selectedModel?.name || ''} style={styles.modelTitle} />
+            </View>
+          </View>
+          
+          <View style={styles.statusRight}>
             <View style={styles.modeBadge}>
               <Text style={styles.modeBadgeText}>{viewerMode}</Text>
             </View>
+            {trackingState !== undefined && (
+              <View style={{
+                width: 8, height: 8, borderRadius: 4,
+                backgroundColor: trackingState === WebXRTrackingState.TRACKING ? '#22c55e' : '#ef4444'
+              }} />
+            )}
           </View>
-          <Text style={styles.statusText}>{status}</Text>
-          {trackingState !== undefined && (
-            <Text
-              style={[
-                styles.trackingText,
-                {
-                  color:
-                    trackingState === WebXRTrackingState.TRACKING
-                      ? '#00ff88'
-                      : trackingState === WebXRTrackingState.NOT_TRACKING
-                        ? '#ff4444'
-                        : '#ffaa00',
-                },
-              ]}>
-              Tracking: {WebXRTrackingState[trackingState]}
-            </Text>
-          )}
         </View>
 
-        {/* Info overlay (AR & VR) */}
-        {xrSession && (
-          <View style={styles.infoBar}>
-            <Text style={styles.infoText}>
-              {viewerMode === 'AR' ? `Superficie: ${surfaceDetected ? 'Rilevata' : 'Ricerca...'}` : 'VR'}{' | Piazzati: '}{objectsPlaced}
-            </Text>
-            <Text style={styles.infoText}>
-              {'Selezionato: '}{selectedInstance?.name || 'Nessuno'}
-            </Text>
-          </View>
-        )}
-
-        {/* Modern 2D Compass */}
         {xrSession && (
           <View style={styles.compassContainer}>
             <View style={styles.compassOuter}>
@@ -163,18 +171,13 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
               ]}>
                 <View style={[styles.compassLine, styles.compassLineNS]} />
                 <View style={[styles.compassLine, styles.compassLineEW]} />
-                <View style={[styles.compassCardinal, {top: 2, left: '50%', marginLeft: -6}]}>
-                  <Text style={styles.compassN}>N</Text>
-                </View>
-                <View style={[styles.compassCardinal, {bottom: 2, left: '50%', marginLeft: -5}]}>
-                  <Text style={styles.compassLetter}>S</Text>
-                </View>
-                <View style={[styles.compassCardinal, {right: 3, top: '50%', marginTop: -8}]}>
-                  <Text style={styles.compassLetter}>E</Text>
-                </View>
-                <View style={[styles.compassCardinal, {left: 2, top: '50%', marginTop: -8}]}>
-                  <Text style={styles.compassLetter}>W</Text>
-                </View>
+                
+                <View style={[styles.compassCardinal, styles.compassN]}><Text style={styles.compassN}>N</Text></View>
+                <View style={[styles.compassCardinal, styles.compassS]}><Text style={styles.compassS}>S</Text></View>
+                <View style={[styles.compassCardinal, styles.compassE]}><Text style={styles.compassE}>E</Text></View>
+                <View style={[styles.compassCardinal, styles.compassW]}><Text style={styles.compassW}>O</Text></View>
+                
+                {/* Freccia rossa spostata (vedi styles) */}
                 <View style={styles.compassNorthPointer} />
               </View>
               <View style={styles.compassCenterDot} />
@@ -184,204 +187,160 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
           </View>
         )}
 
-        {/* Bottom controls */}
         <View style={styles.controls}>
-          <TouchableOpacity
-            style={[
-              styles.xrButton,
-              styles.xrButtonActive,
-              (!sceneReady || loadingModel) && styles.xrButtonDisabled,
-            ]}
-            onPress={goBackToGallery}
-            disabled={!sceneReady || loadingModel}>
-            <Text style={styles.xrButtonText}>
-              {!sceneReady || loadingModel ? '⏳' : '⬅️'}
-            </Text>
-          </TouchableOpacity>
-
-          {xrSession && (
-            <TouchableOpacity
-              style={styles.createBtn}
-              onPress={createAtCenter}>
-              <Text style={styles.createBtnText}>{'➕'}</Text>
+          {xrSession ? (
+            <TouchableOpacity style={styles.createBtn} onPress={createAtCenter}>
+              <Plus color="#fff" size={32} strokeWidth={3} />
             </TouchableOpacity>
-          )}
+          ) : <View style={{width: 60}} />} 
 
-          {xrSession && selectedInstance && (
-            <View style={styles.instanceActionsRow}>
-              <TouchableOpacity style={styles.actionBtnEqual} onPress={removeSelectedInstance}>
-                <Text style={styles.iconBtnText}>{'🗑️'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionBtnEqual, styles.textureBtnBg]}
-                onPress={() => {
-                  refreshMeshList();
-                  setShowTexturePanel((prev: boolean) => !prev);
-                }}>
-                <Text style={styles.iconBtnText}>{'🎨'}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {modelLoaded && !selectedInstance && (
-            <TouchableOpacity
-              style={[styles.actionBtnEqual, styles.textureBtnBg]}
-              onPress={() => {
-                refreshMeshList(modelRootRef.current);
-                setShowTexturePanel((prev: boolean) => !prev);
-              }}>
-              <Text style={styles.iconBtnText}>{'🎨'}</Text>
+          <View style={styles.actionGroup}>
+            <TouchableOpacity 
+              style={[styles.iconBtn, hasSelection && styles.iconBtnDestructive, !hasSelection && styles.iconBtnDisabled]} 
+              onPress={removeSelectedInstance}
+              disabled={!hasSelection}>
+              <Trash2 color={hasSelection ? "#ef4444" : "#888"} size={24} />
             </TouchableOpacity>
-          )}
+
+            {/* MODIFICATO: Disabilitato se !hasSelection */}
+            <TouchableOpacity
+              style={[
+                styles.iconBtn, 
+                showTexturePanel && styles.iconBtnActive,
+                !hasSelection && styles.iconBtnDisabled
+              ]}
+              onPress={handleToggleTexture}
+              disabled={!hasSelection}>
+              <Palette color={showTexturePanel ? "#3b82f6" : "#fff"} size={24} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.iconBtn,
+                (showManipulator && !!manipProperty) && styles.iconBtnActive,
+                !hasSelection && styles.iconBtnDisabled
+              ]}
+              onPress={handleToggleManipulator}
+              disabled={!hasSelection}>
+              <SlidersHorizontal color={(showManipulator && !!manipProperty) ? "#3b82f6" : "#fff"} size={24} />
+            </TouchableOpacity>
+          </View>
         </View>
 
-        {/* Texture / Material selection panel — tabbed */}
         {showTexturePanel && meshListForTexture.length > 0 && (
           <View style={styles.texturePanel}>
             <View style={styles.texturePanelHeader}>
-              <Text style={styles.texturePanelTitle}>Cambia Aspetto</Text>
+              <Text style={styles.texturePanelTitle}>Aspetto</Text>
               <TouchableOpacity onPress={() => setShowTexturePanel(false)}>
-                <Text style={styles.texturePanelClose}>✕</Text>
+                <X color="#fff" size={24} />
               </TouchableOpacity>
             </View>
-
-            {/* Tab bar */}
+            
             <View style={styles.tabBar}>
               <TouchableOpacity
                 style={[styles.tabBtn, textureTab === 'texture' && styles.tabBtnActive]}
-                onPress={() => setTextureTab('texture')}>
-                <Text style={[styles.tabBtnText, textureTab === 'texture' && styles.tabBtnTextActive]}>
-                  🎨 Texture
-                </Text>
+                onPress={() => { setTextureTab('texture'); setActivePresetIndex(null); }}>
+                <Text style={[styles.tabBtnText, textureTab === 'texture' && styles.tabBtnTextActive]}>Texture</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.tabBtn, textureTab === 'material' && styles.tabBtnActive]}
-                onPress={() => setTextureTab('material')}>
-                <Text style={[styles.tabBtnText, textureTab === 'material' && styles.tabBtnTextActive]}>
-                  ✨ Materiale
-                </Text>
+                onPress={() => { setTextureTab('material'); setActivePresetIndex(null); }}>
+                <Text style={[styles.tabBtnText, textureTab === 'material' && styles.tabBtnTextActive]}>Materiale</Text>
               </TouchableOpacity>
             </View>
 
-            {/* Source model label */}
-            {currentSourceName ? (
-              <View style={styles.sourceHeader}>
-                <Text style={styles.sourceHeaderText}>📦 {currentSourceName}</Text>
-              </View>
-            ) : null}
-
-            {/* Mesh selector */}
             <View style={styles.meshSelectorRow}>
               <TouchableOpacity
                 style={styles.meshNavBtn}
                 onPress={() => setSelectedMeshIdx((prev: number) => Math.max(0, prev - 1))}>
-                <Text style={styles.meshNavBtnText}>◀</Text>
+                <ArrowLeft color="#fff" size={16} />
               </TouchableOpacity>
               <Text style={styles.meshNameText} numberOfLines={1}>
                 {meshListForTexture[selectedMeshIdx]?.name || '?'}
               </Text>
-              <Text style={styles.meshCountText}>
-                {selectedMeshIdx + 1}/{meshListForTexture.length}
-              </Text>
               <TouchableOpacity
                 style={styles.meshNavBtn}
                 onPress={() => setSelectedMeshIdx((prev: number) => Math.min(meshListForTexture.length - 1, prev + 1))}>
-                <Text style={styles.meshNavBtnText}>▶</Text>
+                <ArrowLeft color="#fff" size={16} style={{transform: [{rotate: '180deg'}]}} />
               </TouchableOpacity>
             </View>
 
-            {/* Texture presets grid */}
-            {textureTab === 'texture' && (
+            {/* MODIFICATO: ScrollView Orizzontale + Stile selezione */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.presetScrollView}>
               <View style={styles.presetGrid}>
-                {TEXTURE_PRESETS.map((p, i) => (
+                {(textureTab === 'texture' ? TEXTURE_PRESETS : MATERIAL_PRESETS).map((p, i) => (
                   <TouchableOpacity
-                    key={`tex_${i}`}
+                    key={i}
                     style={[
                       styles.presetBtn,
-                      p.type === 'restore' ? styles.presetRestoreBg : styles.presetTextureBg,
+                      // Bordo viola solo se selezionato
+                      activePresetIndex === i && styles.presetBtnSelected
                     ]}
-                    onPress={() => applyTexturePreset(i)}>
-                    <Text style={styles.presetEmoji}>{p.emoji}</Text>
+                    onPress={() => handleApplyPreset(i)}>
+                    <Text style={styles.presetEmoji}>{p.emoji}</Text> 
                     <Text style={styles.presetBtnText}>{p.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
-            )}
-
-            {/* Material presets grid */}
-            {textureTab === 'material' && (
-              <View style={styles.presetGrid}>
-                {MATERIAL_PRESETS.map((p, i) => (
-                  <TouchableOpacity
-                    key={`mat_${i}`}
-                    style={[
-                      styles.presetBtn,
-                      p.type === 'restore' ? styles.presetRestoreBg : styles.presetMaterialBg,
-                    ]}
-                    onPress={() => applyMaterialStylePreset(i)}>
-                    <Text style={styles.presetEmoji}>{p.emoji}</Text>
-                    <Text style={styles.presetBtnText}>{p.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+            </ScrollView>
           </View>
         )}
 
-        {/* Manipulation panel */}
-        {showManipulator && modelLoaded && (
+        {showManipulator && manipProperty && modelLoaded && (
           <View style={styles.manipulatorPanel}>
-            {!manipProperty && (
-              <View style={styles.manipBtnRow}>
-                {[
-                  {key: 'scala', label: 'Scala'},
-                  {key: 'rotX', label: 'Rot X'},
-                  {key: 'rotY', label: 'Rot Y'},
-                  {key: 'posY', label: 'Alt Y'},
-                ].map(item => (
-                  <TouchableOpacity
-                    key={item.key}
-                    style={styles.manipPropBtn}
-                    onPress={() => setManipProperty(item.key)}>
-                    <Text style={styles.manipPropBtnText}>{item.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-            {manipProperty && (
-              <View style={styles.manipActiveRow}>
-                <TouchableOpacity
-                  style={styles.manipStepBtn}
-                  onPress={() => manipStep(manipProperty, -1)}>
-                  <Text style={styles.manipStepBtnText}>{' - '}</Text>
-                </TouchableOpacity>
-                <Text style={styles.manipActiveLabel}>
-                  {(() => {
-                    const t = selectedInstanceRef.current || modelRootRef.current;
-                    if (manipProperty === 'scala') {
-                      const baseScale = (t as any)?._baseScale || 1;
-                      const pct = (((t?.scaling?.x || baseScale) / baseScale) * 100).toFixed(0);
-                      return `Scala ${pct}%`;
-                    }
-                    if (manipProperty === 'rotX')
-                      return `Rot X ${(((t?.rotation?.x || 0) * 180) / Math.PI).toFixed(0)} deg`;
-                    if (manipProperty === 'rotY')
-                      return `Rot Y ${(((t?.rotation?.y || 0) * 180) / Math.PI).toFixed(0)} deg`;
-                    return `Alt Y ${(t?.position?.y || 0).toFixed(2)}m`;
-                  })()}
-                </Text>
-                <TouchableOpacity
-                  style={styles.manipStepBtn}
-                  onPress={() => manipStep(manipProperty, 1)}>
-                  <Text style={styles.manipStepBtnText}>{' + '}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.deselectBtn}
-                  onPress={() => setManipProperty(null)}>
-                  <Text style={styles.deselectBtnText}>{'X'}</Text>
-                </TouchableOpacity>
-              </View>
-            )}
+             <TouchableOpacity style={styles.closeManipBtn} onPress={() => setManipProperty(null)}>
+                <X color="#fff" size={16} />
+             </TouchableOpacity>
+
+            <View style={styles.manipActiveRow}>
+              <TouchableOpacity
+                style={styles.manipStepBtn}
+                onPress={() => manipStep(manipProperty, -1)}>
+                <Text style={styles.manipStepBtnText}>-</Text>
+              </TouchableOpacity>
+              
+              <Text style={styles.manipActiveLabel}>
+                {(() => {
+                  const t = selectedInstanceRef.current || modelRootRef.current;
+                  if (manipProperty === 'scala') {
+                    const baseScale = (t as any)?._baseScale || 1;
+                    const pct = (((t?.scaling?.x || baseScale) / baseScale) * 100).toFixed(0);
+                    return `Scala ${pct}%`;
+                  }
+                  if (manipProperty === 'rotX')
+                    return `Rot X ${(((t?.rotation?.x || 0) * 180) / Math.PI).toFixed(0)}°`;
+                  if (manipProperty === 'rotY')
+                    return `Rot Y ${(((t?.rotation?.y || 0) * 180) / Math.PI).toFixed(0)}°`;
+                  return `Alt Y ${(t?.position?.y || 0).toFixed(2)}m`;
+                })()}
+              </Text>
+              
+              <TouchableOpacity
+                style={styles.manipStepBtn}
+                onPress={() => manipStep(manipProperty, 1)}>
+                <Text style={styles.manipStepBtnText}>+</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Sottomenu con Rot X aggiunto */}
+            <View style={styles.manipBtnRow}>
+                 <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('scala')}>
+                    <Text style={styles.manipPropBtnText}>Scala</Text>
+                 </TouchableOpacity>
+                 
+                 {/* MODIFICATO: Aggiunto Rot X */}
+                 <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('rotX')}>
+                    <Text style={styles.manipPropBtnText}>Rot X</Text>
+                 </TouchableOpacity>
+                 
+                 <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('rotY')}>
+                    <Text style={styles.manipPropBtnText}>Rot Y</Text>
+                 </TouchableOpacity>
+                 
+                 <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('posY')}>
+                    <Text style={styles.manipPropBtnText}>Alt Y</Text>
+                 </TouchableOpacity>
+            </View>
           </View>
         )}
       </View>
