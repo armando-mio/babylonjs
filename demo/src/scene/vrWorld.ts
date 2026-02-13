@@ -27,7 +27,7 @@ export function createVRWorld(scene: Scene, shadowGen: ShadowGenerator | null): 
   skyMat.backFaceCulling = false;
   skyDome.material = skyMat;
   skyDome.isPickable = false;
-  skyDome.infiniteDistance = true;
+  skyDome.renderingGroupId = 0; // Render before group 1 (models)
 
   // Ground (reuse shadowGround)
   const sg = scene.getMeshByName('shadowGround');
@@ -53,6 +53,7 @@ export function createVRWorld(scene: Scene, shadowGen: ShadowGenerator | null): 
   vrGridMat.backFaceCulling = false;
   vrGrid.material = vrGridMat;
   vrGrid.isPickable = false;
+  vrGrid.renderingGroupId = 1;
 
   // Mountains
   const mountainColors = [
@@ -79,6 +80,7 @@ export function createVRWorld(scene: Scene, shadowGen: ShadowGenerator | null): 
     mMat.specularColor = new Color3(0.05, 0.05, 0.05);
     mountain.material = mMat;
     mountain.isPickable = false;
+    mountain.renderingGroupId = 1;
     if (shadowGen) shadowGen.addShadowCaster(mountain);
   });
 
@@ -97,6 +99,7 @@ export function createVRWorld(scene: Scene, shadowGen: ShadowGenerator | null): 
     trunkMat.diffuseColor = new Color3(0.4, 0.25, 0.1);
     trunk.material = trunkMat;
     trunk.isPickable = false;
+    trunk.renderingGroupId = 1;
     const crown = MeshBuilder.CreateSphere(
       `vrCrown_${i}`, {diameter: 1.2, segments: 6}, scene,
     );
@@ -105,6 +108,7 @@ export function createVRWorld(scene: Scene, shadowGen: ShadowGenerator | null): 
     crownMat.diffuseColor = new Color3(0.15, 0.5 + Math.random() * 0.2, 0.1);
     crown.material = crownMat;
     crown.isPickable = false;
+    crown.renderingGroupId = 1;
     if (shadowGen) {
       shadowGen.addShadowCaster(trunk);
       shadowGen.addShadowCaster(crown);
@@ -130,6 +134,7 @@ export function createVRWorld(scene: Scene, shadowGen: ShadowGenerator | null): 
     cloudMat.disableLighting = true;
     cloud.material = cloudMat;
     cloud.isPickable = false;
+    cloud.renderingGroupId = 1;
   }
 
   log('INFO', 'VR: mondo virtuale creato (cielo, terreno, montagne, alberi, nuvole)');

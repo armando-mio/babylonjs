@@ -112,6 +112,13 @@ const App = () => {
   const vrActiveRef = useRef(false);
   const vrBeforeRenderRef = useRef<any>(null);
   const gyroSubRef = useRef<any>(null);
+  const navigatingBackRef = useRef(false);
+  const disposingRef = useRef(false);
+  const cleanupDoneRef = useRef(false);
+  const xrFrameObserverRef = useRef<any>(null);
+  const xrHitTestObserverRef = useRef<any>(null);
+  const xrTrackingObserverRef = useRef<any>(null);
+  const xrStartingRef = useRef(false);
   const originalMaterialsRef = useRef<Map<string, {
     // StandardMaterial props
     diffuse?: Color3;
@@ -711,7 +718,9 @@ const App = () => {
 
       // Pointer / tap handler
       newScene.onPointerObservable.add(evtData => {
+        if (disposingRef.current) return;
         if (evtData.type !== PointerEventTypes.POINTERTAP) return;
+        try {
         const pickResult = newScene.pick(newScene.pointerX, newScene.pointerY);
         if (pickResult?.hit && pickResult.pickedMesh) {
           let current: any = pickResult.pickedMesh;
@@ -742,6 +751,9 @@ const App = () => {
         } else {
           selectInstance(null);
         }
+        } catch (pickErr) {
+          // Ignore pick errors during disposal
+        }
       });
 
       setScene(newScene);
@@ -758,6 +770,7 @@ const App = () => {
 
   // ========== TOGGLE AR/VR ==========
   const toggleXR = useCallback(async () => {
+    if (disposingRef.current) return; // Don't start XR during cleanup
     if (!scene || !rootNode) {
       log('WARN', 'Scena o rootNode non ancora pronto');
       return;
@@ -834,6 +847,9 @@ const App = () => {
         if (modelRootRef.current) modelRootRef.current.setEnabled(true);
         scene.clearColor = new Color4(0.1, 0.1, 0.15, 1);
 
+        // Restore AR rendering group settings
+        scene.setRenderingAutoClearDepthStencil(1, false);
+
         if (gyroSubRef.current) {
           gyroSubRef.current.unsubscribe();
           gyroSubRef.current = null;
@@ -848,6 +864,11 @@ const App = () => {
       }
 
       // ===== ENTERING =====
+      if (xrStartingRef.current) {
+        log('WARN', 'XR/VR già in fase di avvio, skip');
+        return;
+      }
+      xrStartingRef.current = true;
       const mode = viewerMode;
       log('INFO', `--- AVVIO ${mode} ---`);
       setStatus(`Avvio ${mode} in corso...`);
@@ -886,6 +907,10 @@ const App = () => {
           });
           log('INFO', 'VR: Camera con giroscopio attivata');
         }
+
+        // Reset rendering group auto-clear for VR (init disables it for group 1 for AR occlusion)
+        scene.setRenderingAutoClearDepthStencil(0, true, true, true);
+        scene.setRenderingAutoClearDepthStencil(1, true, true, true);
 
         // Create VR world (sky, mountains, trees, clouds)
         const vrGridPlane = createVRWorld(scene, shadowGenRef.current);
@@ -932,6 +957,7 @@ const App = () => {
           log('WARN', `VR: Errore sole: ${sunErr.message}`);
         }
 
+        xrStartingRef.current = false;
         setXrSession({exitXRAsync: async () => {}} as any);
         setStatus('VR ATTIVA! Mondo virtuale senza fotocamera.');
         log('INFO', '=== VR COMPLETAMENTE OPERATIVA ===');
@@ -984,7 +1010,8 @@ const App = () => {
 
         if (hitTestFeature) {
           log('INFO', 'AR: WebXR HitTest abilitato');
-          hitTestFeature.onHitTestResultObservable.add((results) => {
+          xrHitTestObserverRef.current = hitTestFeature.onHitTestResultObservable.add((results) => {
+            if (disposingRef.current) return;
             if (results.length > 0) {
               const hit = results[0];
               hitTestTimestamp = Date.now();
@@ -1025,8 +1052,10 @@ const App = () => {
       setSurfaceDetected(true);
       log('INFO', 'AR: Raycast camera fallback attivo');
 
-      xr.baseExperience.sessionManager.onXRFrameObservable.add(() => {
+      xrFrameObserverRef.current = xr.baseExperience.sessionManager.onXRFrameObservable.add(() => {
+        if (disposingRef.current) return;
         if (!hitTestMarkerRef.current || !xr.baseExperience.camera) return;
+        try {
         const cam = xr.baseExperience.camera;
         const now = Date.now();
         const hitTestRecentlyActive = (now - hitTestTimestamp) < 500;
@@ -1066,6 +1095,9 @@ const App = () => {
             }
           }
         }
+        } catch (frameErr) {
+          // Ignore errors during XR teardown
+        }
       });
 
       // Sun sphere for AR
@@ -1079,22 +1111,26 @@ const App = () => {
 
       session.onXRSessionEnded.add(() => {
         log('INFO', 'Sessione XR terminata (evento)');
-        setXrSession(undefined);
-        setTrackingState(undefined);
         xrRef.current = null;
         lastTrackingRef.current = null;
         if (trackingTimerRef.current) {
           clearTimeout(trackingTimerRef.current);
           trackingTimerRef.current = null;
         }
-        setStatus('AR terminata.');
-        // After the native XR session has ended, perform the heavy cleanup safely.
-        try { scheduleDeferredCleanup(); } catch (e) { }
+        // If we were navigating back, cleanup is already handled by goBackToGallery
+        if (navigatingBackRef.current || disposingRef.current) {
+          log('INFO', 'AR session ended (during back navigation — cleanup already in progress)');
+        } else {
+          setXrSession(undefined);
+          setTrackingState(undefined);
+          setStatus('AR terminata.');
+        }
       });
 
       // Tracking state
       const xrCam = xr.baseExperience.camera;
-      xrCam.onTrackingStateChanged.add((newState: WebXRTrackingState) => {
+      xrTrackingObserverRef.current = xrCam.onTrackingStateChanged.add((newState: WebXRTrackingState) => {
+        if (disposingRef.current) return;
         if (newState === lastTrackingRef.current) return;
         if (trackingTimerRef.current) clearTimeout(trackingTimerRef.current);
         trackingTimerRef.current = setTimeout(() => {
@@ -1112,9 +1148,11 @@ const App = () => {
         }
       }, 2000);
 
+      xrStartingRef.current = false;
       setStatus('AR ATTIVA! Usa i controlli per manipolare il modello.');
       log('INFO', '=== AR COMPLETAMENTE OPERATIVA ===');
     } catch (error: any) {
+      xrStartingRef.current = false;
       log('ERROR', `Errore ${viewerMode}: ${error.message}\n${error.stack || ''}`);
       setStatus(`Errore ${viewerMode}: ${error.message}`);
       setXrSession(undefined);
@@ -1122,29 +1160,102 @@ const App = () => {
     }
   }, [scene, rootNode, xrSession, viewerMode, compassHeading]);
 
-  // Perform heavy cleanup (dispose meshes, scene, reset refs/state).
-  const scheduleDeferredCleanup = useCallback(() => {
-    // Defer heavy disposal to next tick (after native XR fully ends)
+  // Auto-start XR/VR
+  useEffect(() => {
+    if (sceneReady && modelLoaded && !xrSession && !vrActiveRef.current) {
+      const t = setTimeout(() => {
+        if (!xrSession && !vrActiveRef.current) {
+          toggleXR().catch((e) => log('ERROR', `Auto-start XR failed: ${e?.message || e}`));
+        }
+      }, 300);
+      return () => clearTimeout(t);
+    }
+  }, [sceneReady, modelLoaded, xrSession, toggleXR]);
+
+  // ========== CLEANUP & NAVIGATE TO GALLERY ==========
+  const doFullCleanupAndNavigate = useCallback(() => {
+    // Guard against double calls (e.g. safety timer + onXRSessionEnded both firing)
+    if (cleanupDoneRef.current) {
+      log('INFO', 'doFullCleanupAndNavigate: già eseguito, skip');
+      return;
+    }
+    cleanupDoneRef.current = true;
+    disposingRef.current = true;
+    log('INFO', 'doFullCleanupAndNavigate');
+
+    // Clean up VR gyro/observers
+    if (vrBeforeRenderRef.current && sceneRef.current) {
+      try { sceneRef.current.onBeforeRenderObservable.remove(vrBeforeRenderRef.current); } catch (e) {}
+      vrBeforeRenderRef.current = null;
+    }
+    if (gyroSubRef.current) {
+      try { gyroSubRef.current.unsubscribe(); } catch (e) {}
+      gyroSubRef.current = null;
+    }
+    vrActiveRef.current = false;
+
+    // Null out refs that callbacks depend on to prevent native code from accessing them
+    xrRef.current = null;
+    shadowGenRef.current = null;
+    dirLightRef.current = null;
+    groundPlaneRef.current = null;
+    hitTestMarkerRef.current = null;
+    xrFrameObserverRef.current = null;
+    xrHitTestObserverRef.current = null;
+    xrTrackingObserverRef.current = null;
+    originalMaterialsRef.current.clear();
+
+    // CRITICAL: Delay all disposal to let BabylonNative's native async task queue drain.
+    // The native layer (arcana tasks in libBabylonNative.so) still has pending callbacks
+    // after exitXRAsync/onXRSessionEnded. Disposing immediately causes SIGSEGV.
+    // We keep EngineView mounted during this delay so the native context stays valid.
+    const NATIVE_DRAIN_DELAY = 600; // ms — enough for native arcana tasks to complete
+
     setTimeout(() => {
-      try { loadedMeshesRef.current.forEach(m => { try { m.dispose(); } catch (e) {} }); } catch (e) {}
-      loadedMeshesRef.current = [];
-      try { if (modelRootRef.current) { modelRootRef.current.dispose(); modelRootRef.current = null; } } catch (e) {}
-      try { placedInstancesRef.current.forEach(n => { n.getChildMeshes().forEach(m => m.dispose()); n.dispose(); }); } catch (e) {}
-      placedInstancesRef.current = [];
-      try { detectedPlaneMeshesRef.current.forEach(m => { const occ = (m as any)._occluderMesh as Mesh | undefined; if (occ) occ.dispose(); m.dispose(); }); } catch (e) {}
-      detectedPlaneMeshesRef.current.clear();
-      try { if (compassRootRef.current) { compassRootRef.current.getChildMeshes().forEach(m => m.dispose()); compassRootRef.current.dispose(); compassRootRef.current = null; } } catch (e) {}
-      try { if (sunSphereRef.current) { sunSphereRef.current.dispose(); sunSphereRef.current = null; } } catch (e) {}
-      try { if (sceneRef.current) { sceneRef.current.dispose(); sceneRef.current = null; } } catch (e) {}
+      log('INFO', 'Post-drain: disposing scene objects');
 
-      xrRef.current = null;
-      shadowGenRef.current = null;
-      dirLightRef.current = null;
-      groundPlaneRef.current = null;
-      hitTestMarkerRef.current = null;
-      originalMaterialsRef.current.clear();
+      // Dispose meshes and objects while EngineView is still mounted
+      try {
+        loadedMeshesRef.current.forEach(m => { try { m.dispose(); } catch (e) {} });
+        loadedMeshesRef.current = [];
+      } catch (e) {}
+      try {
+        if (modelRootRef.current) { modelRootRef.current.dispose(); modelRootRef.current = null; }
+      } catch (e) {}
+      try {
+        placedInstancesRef.current.forEach(n => {
+          try { n.getChildMeshes().forEach(m => m.dispose()); n.dispose(); } catch (e) {}
+        });
+        placedInstancesRef.current = [];
+      } catch (e) {}
+      try {
+        detectedPlaneMeshesRef.current.forEach(m => {
+          try { const occ = (m as any)._occluderMesh as Mesh | undefined; if (occ) occ.dispose(); m.dispose(); } catch (e) {}
+        });
+        detectedPlaneMeshesRef.current.clear();
+      } catch (e) {}
+      try {
+        if (compassRootRef.current) {
+          compassRootRef.current.getChildMeshes().forEach(m => { try { m.dispose(); } catch (e) {} });
+          compassRootRef.current.dispose();
+          compassRootRef.current = null;
+        }
+      } catch (e) {}
+      try {
+        if (sunSphereRef.current) { sunSphereRef.current.dispose(); sunSphereRef.current = null; }
+      } catch (e) {}
 
-      // Also reset React state here after native cleanup to avoid racing with XR session end
+      // Dispose scene WHILE EngineView is still mounted
+      try {
+        if (sceneRef.current) { sceneRef.current.dispose(); sceneRef.current = null; }
+      } catch (e) {
+        log('WARN', `Errore dispose scene: ${e}`);
+        sceneRef.current = null;
+      }
+
+      log('INFO', 'Cleanup completo');
+
+      // Reset React state and switch screen AFTER disposal is done
       setScene(undefined);
       setCamera(undefined);
       setRootNode(undefined);
@@ -1160,60 +1271,70 @@ const App = () => {
       selectedInstanceRef.current = null;
       setObjectsPlaced(0);
       setStatus('Inizializzazione motore 3D...');
-      log('INFO', 'Cleanup completo (deferred)');
-    }, 100);
-  }, []);
 
-  // Auto-start XR/VR
-  useEffect(() => {
-    if (sceneReady && modelLoaded && !xrSession && !vrActiveRef.current) {
-      const t = setTimeout(() => {
-        if (!xrSession && !vrActiveRef.current) {
-          toggleXR().catch((e) => log('ERROR', `Auto-start XR failed: ${e?.message || e}`));
-        }
-      }, 300);
-      return () => clearTimeout(t);
-    }
-  }, [sceneReady, modelLoaded, xrSession, toggleXR]);
+      // Switch screen (triggers EngineView unmount)
+      setSelectedModel(null);
+      setCurrentScreen('gallery');
+
+      // Reset navigation flags after everything is done
+      navigatingBackRef.current = false;
+      setTimeout(() => {
+        disposingRef.current = false;
+        cleanupDoneRef.current = false;
+      }, 100);
+
+      log('INFO', 'Tornato alla galleria');
+    }, NATIVE_DRAIN_DELAY);
+  }, []);
 
   // ========== BACK TO GALLERY ==========
   const goBackToGallery = useCallback(() => {
+    if (navigatingBackRef.current || disposingRef.current) return; // Already navigating
     log('INFO', 'goBackToGallery chiamato');
+    navigatingBackRef.current = true;
+    disposingRef.current = true; // Block all frame/pointer callbacks immediately
 
-    // IMMEDIATELY switch to gallery screen (unmounts EngineView first)
-    setCurrentScreen('gallery');
-    setSelectedModel(null);
+    // CRITICAL: Do NOT call exitXRAsync() — BabylonNative's native XR shutdown
+    // (libBabylonNative.so arcana task pipeline) triggers SIGSEGV by accessing
+    // already-freed native objects during the async exit process.
+    // Instead: remove all XR observables, null refs, and let doFullCleanupAndNavigate
+    // handle scene disposal + EngineView unmount (which tears down XR natively).
 
-    // Clean up VR gyro/observers
-    if (vrBeforeRenderRef.current && sceneRef.current) {
-      sceneRef.current.onBeforeRenderObservable.remove(vrBeforeRenderRef.current);
-      vrBeforeRenderRef.current = null;
-    }
-    if (gyroSubRef.current) {
-      gyroSubRef.current.unsubscribe();
-      gyroSubRef.current = null;
-    }
+    if (xrSession && !vrActiveRef.current && xrRef.current) {
+      log('INFO', 'AR: cleanup observers e skip exitXRAsync (prevenzione SIGSEGV nativo)');
 
-    // If an XR session is active and we're in AR, do NOT dispose scene/meshes here:
-    // disposing while native XR is still active can crash the native/JS thread.
-    if (xrSession && !vrActiveRef.current) {
-      if (viewerMode === 'VR') {
-        try { xrSession.exitXRAsync().catch(() => {}); } catch (e) {}
-        vrActiveRef.current = false;
-        // schedule cleanup after VR exit
-        try { scheduleDeferredCleanup(); } catch (e) {}
-      } else {
-        log('INFO', 'AR active: skipping explicit exit/cleanup; waiting for session end');
-        // leave heavy cleanup to session.onXRSessionEnded handler
+      // Remove ALL XR observables to prevent native callbacks from dispatching
+      try {
+        if (xrFrameObserverRef.current && xrRef.current?.baseExperience?.sessionManager?.onXRFrameObservable) {
+          xrRef.current.baseExperience.sessionManager.onXRFrameObservable.remove(xrFrameObserverRef.current);
+          xrFrameObserverRef.current = null;
+        }
+      } catch (e) {}
+      try {
+        if (xrHitTestObserverRef.current) {
+          xrHitTestObserverRef.current = null;
+        }
+      } catch (e) {}
+      try {
+        if (xrTrackingObserverRef.current && xrRef.current?.baseExperience?.camera?.onTrackingStateChanged) {
+          xrRef.current.baseExperience.camera.onTrackingStateChanged.remove(xrTrackingObserverRef.current);
+          xrTrackingObserverRef.current = null;
+        }
+      } catch (e) {}
+
+      // Null out hitTestMarker and XR refs immediately
+      hitTestMarkerRef.current = null;
+      xrRef.current = null;
+      lastTrackingRef.current = null;
+      if (trackingTimerRef.current) {
+        clearTimeout(trackingTimerRef.current);
+        trackingTimerRef.current = null;
       }
-      log('INFO', 'Tornato alla galleria (XR still ending)');
-      return;
     }
 
-    // No XR session: perform cleanup now
-    try { scheduleDeferredCleanup(); } catch (e) {}
-    log('INFO', 'Tornato alla galleria (cleanup scheduled)');
-  }, [xrSession, viewerMode, scheduleDeferredCleanup]);
+    // Go directly to full cleanup (no exitXRAsync, no safety timer)
+    doFullCleanupAndNavigate();
+  }, [xrSession, doFullCleanupAndNavigate]);
 
   // ========== ANDROID BACK BUTTON → GALLERY ==========
   useEffect(() => {
