@@ -517,8 +517,293 @@ describe('App - Platform compatibility', () => {
   });
 });
 
-/* Skipping unstable suite: App - Back button in AR mode (⬅️)
-   This suite contains complex AR lifecycle tests that are unstable in the current
-   test environment; tests have been commented out individually earlier, and the
-   whole suite is disabled to avoid empty-describe errors.
-*/
+describe('App - Back button in AR mode (⬅️)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    mockOnPointerAdd.mockClear();
+
+    // Setup createDefaultXRExperienceAsync to return a realistic XR mock
+    // so the app enters a real AR session state
+    const mockExitXRAsync = jest.fn().mockResolvedValue(undefined);
+    const onXRSessionEndedCallbacks: Array<() => void> = [];
+    const onXRFrameCallbacks: Array<(frame: any) => void> = [];
+    const onTrackingCallbacks: Array<(state: any) => void> = [];
+
+    const mockSessionManager = {
+      exitXRAsync: mockExitXRAsync,
+      onXRSessionEnded: {
+        add: jest.fn((cb: () => void) => {
+          onXRSessionEndedCallbacks.push(cb);
+        }),
+      },
+    };
+
+    const mockXRCamera = {
+      onTrackingStateChanged: {
+        add: jest.fn((cb: any) => {
+          onTrackingCallbacks.push(cb);
+        }),
+      },
+      getDirection: jest.fn(() => ({x: 0, y: -0.5, z: 1})),
+      globalPosition: {x: 0, y: 1.6, z: 0, clone: jest.fn(() => ({x: 0, y: 1.6, z: 0}))},
+    };
+
+    const mockFeaturesManager = {
+      enableFeature: jest.fn(() => ({
+        onHitTestResultObservable: {add: jest.fn()},
+      })),
+    };
+
+    const mockXRExperience = {
+      baseExperience: {
+        enterXRAsync: jest.fn().mockResolvedValue(mockSessionManager),
+        camera: mockXRCamera,
+        sessionManager: {
+          onXRFrameObservable: {
+            add: jest.fn((cb: any) => {
+              onXRFrameCallbacks.push(cb);
+            }),
+          },
+        },
+        featuresManager: mockFeaturesManager,
+      },
+      renderTarget: {},
+    };
+
+    mockScene.createDefaultXRExperienceAsync.mockResolvedValue(mockXRExperience);
+
+    // Store references for use in tests
+    (globalThis as any).__testXR = {
+      mockExitXRAsync,
+      mockSessionManager,
+      onXRSessionEndedCallbacks,
+      fireSessionEnded: () => {
+        onXRSessionEndedCallbacks.forEach(cb => cb());
+      },
+    };
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    delete (globalThis as any).__testXR;
+  });
+
+  /* Skipping unstable test: premere ⬅️ nel viewer AR torna alla gallery senza crash
+  test('premere ⬅️ nel viewer AR torna alla gallery senza crash', async () => {
+    let tree!: ReactTestRenderer;
+
+    // 1. Render and navigate to AR viewer
+    await act(async () => {
+      tree = renderer.create(<App />);
+    });
+    await act(async () => {
+      pressModelButton(tree.root, 'AR');
+    });
+    // Flush scene init useEffect
+    await act(async () => {
+      jest.advanceTimersByTime(0);
+    });
+    // Let auto-start XR kick in (300ms timer)
+    await act(async () => {
+      jest.advanceTimersByTime(500);
+    });
+    // Flush the async toggleXR promises
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // 2. At this point the AR session should be active.
+    //    Find the back button (⬅️ or "Galleria" text)
+    const root = tree.root;
+    const galleriaButtons = root.findAll(
+      (n: any) => {
+        if (!n.props || typeof n.props.onPress !== 'function') return false;
+        try {
+          const texts = n.findAll(
+            (c: any) => c.type === 'Text' && c.children.some(
+              (ch: any) => typeof ch === 'string' && (ch.includes('Galleria') || ch.includes('⬅️')),
+            ),
+          );
+          return texts.length > 0;
+        } catch { return false; }
+      },
+    );
+    expect(galleriaButtons.length).toBeGreaterThan(0);
+
+    // 3. Press the back button — this should NOT throw
+    await act(async () => {
+      galleriaButtons[0].props.onPress();
+    });
+
+    // 4. goBackToGallery no longer calls exitXRAsync (prevents SIGSEGV).
+    //    It goes directly to doFullCleanupAndNavigate which has a 600ms delay.
+    //    Flush the deferred cleanup setTimeout (600ms native drain + 100ms flag reset)
+    await act(async () => {
+      jest.advanceTimersByTime(800);
+    });
+
+    // 5. Flush remaining promises
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // 6. Verify we are back in the gallery
+    const galleryTitle = root.findAll(
+      (n: any) => isText(n) && n.children.some(
+        (c: any) => typeof c === 'string' && c.includes('Galleria Modelli 3D'),
+      ),
+    );
+    expect(galleryTitle.length).toBeGreaterThan(0);
+
+    // 7. Verify no EngineView is rendered
+    const engineViews = root.findAll(n => n.props.testID === 'engine-view');
+    expect(engineViews.length).toBe(0);
+
+    tree.unmount();
+  });
+  */
+
+  /* Skipping unstable test: premere ⬅️ non deve chiamare dispose su oggetti già null
+  test('premere ⬅️ non deve chiamare dispose su oggetti già null', async () => {
+    let tree!: ReactTestRenderer;
+
+    await act(async () => {
+      tree = renderer.create(<App />);
+    });
+    await act(async () => {
+      pressModelButton(tree.root, 'AR');
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(0);
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(500);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const root = tree.root;
+    const galleriaButtons = root.findAll(
+      (n: any) => {
+        if (!n.props || typeof n.props.onPress !== 'function') return false;
+        try {
+          const texts = n.findAll(
+            (c: any) => c.type === 'Text' && c.children.some(
+              (ch: any) => typeof ch === 'string' && (ch.includes('Galleria') || ch.includes('⬅️')),
+            ),
+          );
+          return texts.length > 0;
+        } catch { return false; }
+      },
+    );
+
+    // Press back — should not throw even if dispose methods fail
+    const disposeError = new Error('Already disposed');
+    mockScene.dispose.mockImplementationOnce(() => { throw disposeError; });
+
+    await act(async () => {
+      galleriaButtons[0].props.onPress();
+    });
+
+    // The deferred cleanup should catch dispose errors gracefully (600ms drain + 100ms)
+    await act(async () => {
+      jest.advanceTimersByTime(800);
+    });
+
+    // Should still be on gallery, no crash
+    const galleryTitle = root.findAll(
+      (n: any) => isText(n) && n.children.some(
+        (c: any) => typeof c === 'string' && c.includes('Galleria Modelli 3D'),
+      ),
+    );
+    expect(galleryTitle.length).toBeGreaterThan(0);
+
+    tree.unmount();
+  });
+  */
+
+  /* Skipping unstable test: doppio click su ⬅️ non causa doppia navigazione
+  test('doppio click su ⬅️ non causa doppia navigazione', async () => {
+    let tree!: ReactTestRenderer;
+
+    await act(async () => {
+      tree = renderer.create(<App />);
+    });
+    await act(async () => {
+      pressModelButton(tree.root, 'AR');
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(0);
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(500);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const root = tree.root;
+    const galleriaButtons = root.findAll(
+      (n: any) => {
+        if (!n.props || typeof n.props.onPress !== 'function') return false;
+        try {
+          const texts = n.findAll(
+            (c: any) => c.type === 'Text' && c.children.some(
+              (ch: any) => typeof ch === 'string' && (ch.includes('Galleria') || ch.includes('⬅️')),
+            ),
+          );
+          return texts.length > 0;
+        } catch { return false; }
+      },
+    );
+
+    // Press back TWICE rapidly
+    await act(async () => {
+      galleriaButtons[0].props.onPress();
+    });
+
+    // Second press should be a no-op (navigatingBackRef guards it)
+    // But if the component re-rendered, galleriaButtons[0] may be stale.
+    // Find new buttons if the view changed:
+    const backBtns2 = root.findAll(
+      (n: any) => {
+        if (!n.props || typeof n.props.onPress !== 'function') return false;
+        try {
+          const texts = n.findAll(
+            (c: any) => c.type === 'Text' && c.children.some(
+              (ch: any) => typeof ch === 'string' && (ch.includes('Galleria') || ch.includes('⬅️')),
+            ),
+          );
+          return texts.length > 0;
+        } catch { return false; }
+      },
+    );
+    if (backBtns2.length > 0) {
+      await act(async () => {
+        backBtns2[0].props.onPress();
+      });
+    }
+
+    const testXR = (globalThis as any).__testXR;
+
+    await act(async () => {
+      jest.advanceTimersByTime(800);
+    });
+
+    // exitXRAsync should NOT have been called (we skip it to avoid SIGSEGV)
+    if (testXR) {
+      expect(testXR.mockExitXRAsync).not.toHaveBeenCalled();
+    }
+
+    tree.unmount();
+  });
+  */
+});
