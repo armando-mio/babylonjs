@@ -22,7 +22,9 @@ export function createSunSphere(
   const sunX = SUN_SPHERE_DISTANCE * Math.cos(sunPos.altitude) * Math.sin(sunPos.azimuth);
   const sunZ = -SUN_SPHERE_DISTANCE * Math.cos(sunPos.altitude) * Math.cos(sunPos.azimuth);
   const sunY = GROUND_Y + SUN_SPHERE_DISTANCE * Math.sin(sunPos.altitude);
-  const finalSunY = sunPos.isAboveHorizon ? sunY : GROUND_Y + 0.5;
+  // Enforce a minimum height
+  const minVisibleHeight = GROUND_Y + SUN_SPHERE_DISTANCE * 0.5; // 50% of distance
+  const finalSunY = sunPos.isAboveHorizon ? Math.max(sunY, minVisibleHeight) : GROUND_Y + 0.5;
 
   const sunSphere = MeshBuilder.CreateSphere('sunSphere', {diameter: 0.6, segments: 16}, scene);
   sunSphere.position.set(sunX, finalSunY, sunZ);

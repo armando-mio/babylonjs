@@ -112,6 +112,8 @@ const App = () => {
   const vrActiveRef = useRef(false);
   const vrBeforeRenderRef = useRef<any>(null);
   const gyroSubRef = useRef<any>(null);
+  const vrFrozenRef = useRef(false);
+  const [vrFrozen, setVrFrozen] = useState(false);
   const navigatingBackRef = useRef(false);
   const disposingRef = useRef(false);
   const cleanupDoneRef = useRef(false);
@@ -159,6 +161,8 @@ const App = () => {
     } else {
       setShowManipulator(false);
       setManipProperty(null);
+      // Chiude anche texture se deseleziono
+      setShowTexturePanel(false); 
     }
   }, []);
 
@@ -857,6 +861,8 @@ const App = () => {
 
         if (xrSession) await xrSession.exitXRAsync();
         vrActiveRef.current = false;
+        vrFrozenRef.current = false;
+        setVrFrozen(false);
         setXrSession(undefined);
         log('INFO', `Sessione ${viewerMode} terminata`);
         setStatus(`${viewerMode} disattivata.`);
@@ -887,8 +893,11 @@ const App = () => {
           vrCam.radius = 5;
           vrCam.lowerRadiusLimit = 2;
           vrCam.upperRadiusLimit = 30;
-          vrCam.lowerBetaLimit = 0.2;
-          vrCam.upperBetaLimit = Math.PI - 0.1;
+          // Limit vertical tilt so user cannot look fully above or below.
+          // Allow +/- 30 degrees from horizontal (pi/2) by default.
+          const maxTilt = Math.PI / 6; // 30deg
+          vrCam.lowerBetaLimit = Math.PI / 2 - maxTilt;
+          vrCam.upperBetaLimit = Math.PI / 2 + maxTilt;
           vrCam.detachControl();
           vrCam.inputs.clear();
 
@@ -947,6 +956,16 @@ const App = () => {
             lastHitPosRef.current = camPos.add(fwdFlat.scale(3));
             lastHitPosRef.current.y = GROUND_Y;
           }
+
+          // Clamp camera beta to configured limits to avoid looking fully over/under
+          try {
+            const arcCam = scene.activeCamera as ArcRotateCamera;
+            const lb = arcCam.lowerBetaLimit;
+            const ub = arcCam.upperBetaLimit;
+            if (lb != null && arcCam.beta < lb) arcCam.beta = lb;
+            if (ub != null && arcCam.beta > ub) arcCam.beta = ub;
+          } catch (e) {}
+
         });
         vrBeforeRenderRef.current = vrObserver;
 
@@ -1368,6 +1387,41 @@ const App = () => {
     }
   }, [selectedModel, placeModelAt]);
 
+  
+
+  // ========== TOGGLE VR FREEZE (lock/unlock gyroscope) ==========
+  const toggleVRFreeze = useCallback(() => {
+    if (!vrActiveRef.current || !sceneRef.current) return;
+    const cam = sceneRef.current.activeCamera as ArcRotateCamera;
+    if (!cam) return;
+
+    if (!vrFrozenRef.current) {
+      // FREEZE: unsubscribe gyroscope
+      if (gyroSubRef.current) {
+        gyroSubRef.current.unsubscribe();
+        gyroSubRef.current = null;
+      }
+      vrFrozenRef.current = true;
+      setVrFrozen(true);
+      log('INFO', 'VR: Visuale congelata');
+    } else {
+      // UNFREEZE: re-subscribe gyroscope
+      setUpdateIntervalForType(SensorTypes.gyroscope, 16);
+      gyroSubRef.current = gyroscope.subscribe(({x, y}) => {
+        const sensitivity = 0.035;
+        cam.alpha += y * sensitivity;
+        cam.beta += x * sensitivity;
+        const lb = cam.lowerBetaLimit;
+        const ub = cam.upperBetaLimit;
+        if (lb != null && cam.beta < lb) cam.beta = lb;
+        if (ub != null && cam.beta > ub) cam.beta = ub;
+      });
+      vrFrozenRef.current = false;
+      setVrFrozen(false);
+      log('INFO', 'VR: Visuale scongelata');
+    }
+  }, []);
+
   // ========== RENDER ==========
   if (currentScreen === 'gallery') {
     return <GalleryScreen onOpenModel={openModel} />;
@@ -1408,6 +1462,8 @@ const App = () => {
       goBackToGallery={goBackToGallery}
       createAtCenter={createAtCenter}
       removeSelectedInstance={removeSelectedInstance}
+      vrFrozen={vrFrozen}
+      toggleVRFreeze={toggleVRFreeze}
     />
   );
 };

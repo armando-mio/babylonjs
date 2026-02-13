@@ -109,7 +109,7 @@ export const styles = StyleSheet.create({
     height: 24,
   },
   
-  // MODIFICATO: Layout pulsanti galleria (Row)
+  // Layout pulsanti galleria (Row)
   modelActions: {
     flexDirection: 'row',
     gap: 8,
@@ -117,7 +117,7 @@ export const styles = StyleSheet.create({
   },
   arActionBtn: {
     flex: 1,
-    flexDirection: 'row', // Icona a destra del testo
+    flexDirection: 'row',
     backgroundColor: 'rgba(34, 197, 94, 0.15)',
     paddingVertical: 10,
     paddingHorizontal: 8,
@@ -130,7 +130,7 @@ export const styles = StyleSheet.create({
   },
   vrActionBtn: {
     flex: 1,
-    flexDirection: 'row', // Icona a destra del testo
+    flexDirection: 'row',
     backgroundColor: 'rgba(59, 130, 246, 0.15)',
     paddingVertical: 10,
     paddingHorizontal: 8,
@@ -147,7 +147,6 @@ export const styles = StyleSheet.create({
     fontWeight: '800',
     textTransform: 'uppercase',
   },
-
   container: {
     flex: 1,
     backgroundColor: '#000',
@@ -258,9 +257,9 @@ export const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.05)',
   },
   iconBtnActive: {
-     backgroundColor: 'rgba(59, 130, 246, 0.25)',
-     borderColor: COLORS.primary,
-     borderWidth: 1,
+    backgroundColor: 'rgba(59, 130, 246, 0.25)',
+    borderColor: COLORS.primary,
+    borderWidth: 1,
   },
   iconBtnDestructive: {
     backgroundColor: 'rgba(239, 68, 68, 0.15)',
@@ -270,6 +269,31 @@ export const styles = StyleSheet.create({
   iconBtnDisabled: {
     opacity: 0.2,
   },
+  
+  // Pulsante stabilizzazione VR
+  vrStabilizeBtn: {
+    backgroundColor: 'rgba(59, 130, 246, 0.8)',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+    elevation: 5,
+    shadowColor: COLORS.primary,
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.5,
+    shadowRadius: 5,
+  },
+  vrStabilizeBtnActive: {
+    backgroundColor: 'rgba(234, 179, 8, 0.9)',
+    borderColor: '#facc15',
+    borderWidth: 2,
+    shadowColor: '#facc15',
+    shadowOpacity: 0.7,
+  },
+
   createBtn: {
     backgroundColor: COLORS.success,
     width: 60,
@@ -342,12 +366,12 @@ export const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   
-  // MODIFICATO: Stili per i preset (più piccoli e su una riga)
+  // Stili per i preset (più piccoli e su una riga)
   presetScrollView: {
     maxHeight: 70, // Altezza limitata per la scroll view orizzontale
   },
   presetGrid: {
-    flexDirection: 'row', // Orizzontale
+    flexDirection: 'row',
     gap: 8,
     paddingHorizontal: 2,
   },
@@ -356,14 +380,13 @@ export const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)', // Bordo default quasi invisibile
+    borderColor: 'rgba(255,255,255,0.1)',
     minWidth: 50,
     height: 55,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.03)',
   },
-  // Nuovi stili per selezione attiva
   presetBtnSelected: {
     borderColor: COLORS.accentPurple, // Bordo viola SOLO se selezionato
     backgroundColor: 'rgba(168, 85, 247, 0.15)',
@@ -371,7 +394,6 @@ export const styles = StyleSheet.create({
   },
   presetEmoji: { fontSize: 18, marginBottom: 2 },
   presetBtnText: { color: '#fff', fontSize: 9, fontWeight: '700' },
-  
   tabBar: {
     flexDirection: 'row',
     marginBottom: 8,
@@ -405,7 +427,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     marginTop: 12,
-    flexWrap: 'wrap', // Per gestire più bottoni
+    flexWrap: 'wrap',
   },
   manipPropBtn: {
     backgroundColor: 'rgba(59, 130, 246, 0.1)',
@@ -473,18 +495,14 @@ export const styles = StyleSheet.create({
   compassLineEW: { width: '100%', height: 1, top: '50%' },
   compassCardinal: { position: 'absolute' },
   
-  // MODIFICATO: Z-Index e posizioni
   // N/S/E/W sono sullo sfondo
   compassN: { color: COLORS.danger, fontSize: 10, fontWeight: '900', top: 2, left: '50%', marginLeft: -3, zIndex: 1 },
   compassS: { color: COLORS.textSec, fontSize: 9, fontWeight: '700', bottom: 2, left: '50%', marginLeft: -3, zIndex: 1 },
   compassE: { color: COLORS.textSec, fontSize: 9, fontWeight: '700', right: 3, top: '50%', marginTop: -5, zIndex: 1 },
   compassW: { color: COLORS.textSec, fontSize: 9, fontWeight: '700', left: 3, top: '50%', marginTop: -5, zIndex: 1 },
-  
-  // Freccia Rossa: spostata "in mezzo" (tra freccia bianca e lettere)
-  // top aumentato per staccarla dalla N
   compassNorthPointer: {
     position: 'absolute',
-    top: 9, // Spostata un po' più giù per non toccare la N
+    top: 9, // Spostata un po' più giù per non toccare la N (di Nord)
     left: '50%',
     marginLeft: -3,
     borderLeftWidth: 3,
@@ -493,7 +511,7 @@ export const styles = StyleSheet.create({
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
     borderBottomColor: COLORS.danger,
-    zIndex: 2, // Sopra le lettere
+    zIndex: 2,
   },
   compassCenterDot: { position: 'absolute', width: 3, height: 3, borderRadius: 1.5, backgroundColor: '#fff', zIndex: 3 },
   

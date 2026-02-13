@@ -5,12 +5,12 @@ import {
   Text,
   TouchableOpacity,
   ActivityIndicator,
-  ScrollView // Aggiunto per le card texture
+  ScrollView
 } from 'react-native';
 import {EngineView} from '@babylonjs/react-native';
 import {Camera, WebXRTrackingState, AbstractMesh, TransformNode} from '@babylonjs/core';
 import {
-  ArrowLeft, Palette, Trash2, SlidersHorizontal, Plus, X, Rotate3d, Move
+  ArrowLeft, Palette, Trash2, SlidersHorizontal, Plus, X, Rotate3d, Move, Lock
 } from 'lucide-react-native';
 
 import {ModelData} from '../../modelsData';
@@ -53,7 +53,9 @@ interface ViewerUIProps {
   goBackToGallery: () => void;
   createAtCenter: () => void;
   removeSelectedInstance: () => void;
-  toggleManipulator?: () => void; 
+  toggleManipulator?: () => void;
+  vrFrozen?: boolean;
+  toggleVRFreeze?: () => void;
 }
 
 export const ViewerUI: React.FC<ViewerUIProps> = ({
@@ -90,24 +92,26 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
   goBackToGallery,
   createAtCenter,
   removeSelectedInstance,
+  vrFrozen,
+  toggleVRFreeze,
 }) => {
   // Stato locale per evidenziare il preset attivo (per il bordo viola)
   const [activePresetIndex, setActivePresetIndex] = useState<number | null>(null);
 
-  // MODIFICATO: Logica apertura Dimensioni (chiude Aspetto)
+  // Logica apertura Dimensioni 
   const handleToggleManipulator = () => {
     if (!selectedInstance) return;
-    setShowTexturePanel(false); // Chiude l'altro pannello
+    setShowTexturePanel(false); // Chiude Pannello Aspetto
     setManipProperty(null); 
     setManipProperty('scala');
   };
 
-  // MODIFICATO: Logica apertura Aspetto (chiude Dimensioni)
+  // Logica apertura Aspetto
   const handleToggleTexture = () => {
     refreshMeshList();
-    setManipProperty(null); // Chiude l'altro pannello
+    setManipProperty(null); // Chiude Pannello Dimensioni
     setShowTexturePanel((prev: boolean) => !prev);
-    setActivePresetIndex(null); // Reset selezione visiva
+    setActivePresetIndex(null);
   };
 
   // Applicazione preset con aggiornamento stato locale
@@ -145,7 +149,7 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
               <ArrowLeft color="#fff" size={20} />
             </TouchableOpacity>
             <View style={{flex: 1}}>
-                 <MarqueeText text={selectedModel?.name || ''} style={styles.modelTitle} />
+                <MarqueeText text={selectedModel?.name || ''} style={styles.modelTitle} />
             </View>
           </View>
           
@@ -177,7 +181,6 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
                 <View style={[styles.compassCardinal, styles.compassE]}><Text style={styles.compassE}>E</Text></View>
                 <View style={[styles.compassCardinal, styles.compassW]}><Text style={styles.compassW}>O</Text></View>
                 
-                {/* Freccia rossa spostata (vedi styles) */}
                 <View style={styles.compassNorthPointer} />
               </View>
               <View style={styles.compassCenterDot} />
@@ -187,13 +190,29 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
           </View>
         )}
 
+        {/* --- CONTROLS --- */}
         <View style={styles.controls}>
-          {xrSession ? (
-            <TouchableOpacity style={styles.createBtn} onPress={createAtCenter}>
-              <Plus color="#fff" size={32} strokeWidth={3} />
-            </TouchableOpacity>
-          ) : <View style={{width: 60}} />} 
+          {/* Gruppo Sinistra: Pulsante VR Stabilize OPPURE Create Button */}
+          <View style={{flexDirection: 'row', gap: 12}}>
+            {xrSession && viewerMode === 'VR' && toggleVRFreeze && (
+              <TouchableOpacity
+                style={[
+                  styles.vrStabilizeBtn,
+                  vrFrozen && styles.vrStabilizeBtnActive,
+                ]}
+                onPress={toggleVRFreeze}>
+                <Lock color="#fff" size={24} />
+              </TouchableOpacity>
+            )}
 
+            {xrSession && (
+              <TouchableOpacity style={styles.createBtn} onPress={createAtCenter}>
+                <Plus color="#fff" size={32} strokeWidth={3} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Gruppo Destra: Strumenti */}
           <View style={styles.actionGroup}>
             <TouchableOpacity 
               style={[styles.iconBtn, hasSelection && styles.iconBtnDestructive, !hasSelection && styles.iconBtnDisabled]} 
@@ -202,7 +221,6 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
               <Trash2 color={hasSelection ? "#ef4444" : "#888"} size={24} />
             </TouchableOpacity>
 
-            {/* MODIFICATO: Disabilitato se !hasSelection */}
             <TouchableOpacity
               style={[
                 styles.iconBtn, 
@@ -265,7 +283,6 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
               </TouchableOpacity>
             </View>
 
-            {/* MODIFICATO: ScrollView Orizzontale + Stile selezione */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.presetScrollView}>
               <View style={styles.presetGrid}>
                 {(textureTab === 'texture' ? TEXTURE_PRESETS : MATERIAL_PRESETS).map((p, i) => (
@@ -288,9 +305,9 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
 
         {showManipulator && manipProperty && modelLoaded && (
           <View style={styles.manipulatorPanel}>
-             <TouchableOpacity style={styles.closeManipBtn} onPress={() => setManipProperty(null)}>
-                <X color="#fff" size={16} />
-             </TouchableOpacity>
+            <TouchableOpacity style={styles.closeManipBtn} onPress={() => setManipProperty(null)}>
+              <X color="#fff" size={16} />
+            </TouchableOpacity>
 
             <View style={styles.manipActiveRow}>
               <TouchableOpacity
@@ -322,24 +339,22 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
               </TouchableOpacity>
             </View>
 
-            {/* Sottomenu con Rot X aggiunto */}
             <View style={styles.manipBtnRow}>
-                 <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('scala')}>
-                    <Text style={styles.manipPropBtnText}>Scala</Text>
-                 </TouchableOpacity>
-                 
-                 {/* MODIFICATO: Aggiunto Rot X */}
-                 <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('rotX')}>
-                    <Text style={styles.manipPropBtnText}>Rot X</Text>
-                 </TouchableOpacity>
-                 
-                 <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('rotY')}>
-                    <Text style={styles.manipPropBtnText}>Rot Y</Text>
-                 </TouchableOpacity>
-                 
-                 <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('posY')}>
-                    <Text style={styles.manipPropBtnText}>Alt Y</Text>
-                 </TouchableOpacity>
+                <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('scala')}>
+                  <Text style={styles.manipPropBtnText}>Scala</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('rotX')}>
+                  <Text style={styles.manipPropBtnText}>Rot X</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('rotY')}>
+                  <Text style={styles.manipPropBtnText}>Rot Y</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('posY')}>
+                  <Text style={styles.manipPropBtnText}>Alt Y</Text>
+                </TouchableOpacity>
             </View>
           </View>
         )}
