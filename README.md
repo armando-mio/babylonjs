@@ -36,4 +36,6 @@ The application logic is located in the `demo` directory. To run the app:
     npx react-native run-android
     ```
 
+ISSUE FOR iOS: in boost.podspec change url into 'archives.boost.io/release'
+
 For detailed prerequisites and troubleshooting, please refer to the [Demo README](demo/README.md).

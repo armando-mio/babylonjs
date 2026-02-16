@@ -36,7 +36,7 @@
 		</dict>
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string></string>
+	<string>L'app usa la tua posizione per mostrare gli oggetti AR nel posto giusto.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Camera access is required to render augmented reality content.</string>
 	<key>NSMotionUsageDescription</key>
