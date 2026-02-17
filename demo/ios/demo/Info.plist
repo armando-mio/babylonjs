@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
 		<key>NSExceptionDomains</key>
 		<dict>
 			<key>localhost</key>
@@ -35,10 +37,16 @@
 			</dict>
 		</dict>
 	</dict>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>L'app usa la tua posizione per mostrare gli oggetti AR nel posto giusto.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>This app needs local network access to connect to the Metro bundler during development.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Camera access is required to render augmented reality content.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>L'app usa la tua posizione per mostrare gli oggetti AR nel posto giusto.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Motion data is used to improve augmented reality surface detection.</string>
 	<key>UILaunchStoryboardName</key>
@@ -46,9 +54,6 @@
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>armv7</string>
-		<string>arkit</string>
-		<string>camera</string>
-		<string>gyroscope</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>

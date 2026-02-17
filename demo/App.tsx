@@ -904,17 +904,26 @@ const App = () => {
           const headingRad = (compassHeading * Math.PI) / 180;
           vrCam.alpha = -(headingRad) - Math.PI / 2;
 
-          setUpdateIntervalForType(SensorTypes.gyroscope, 16);
-          gyroSubRef.current = gyroscope.subscribe(({x, y, z}) => {
-            const sensitivity = 0.035;
-            vrCam.alpha += y * sensitivity;
-            vrCam.beta += x * sensitivity;
-            const lb = vrCam.lowerBetaLimit;
-            const ub = vrCam.upperBetaLimit;
-            if (lb != null && vrCam.beta < lb) vrCam.beta = lb;
-            if (ub != null && vrCam.beta > ub) vrCam.beta = ub;
-          });
-          log('INFO', 'VR: Camera con giroscopio attivata');
+          try {
+            setUpdateIntervalForType(SensorTypes.gyroscope, 16);
+            gyroSubRef.current = gyroscope.subscribe(
+              ({x, y, z}) => {
+                const sensitivity = 0.035;
+                vrCam.alpha += y * sensitivity;
+                vrCam.beta += x * sensitivity;
+                const lb = vrCam.lowerBetaLimit;
+                const ub = vrCam.upperBetaLimit;
+                if (lb != null && vrCam.beta < lb) vrCam.beta = lb;
+                if (ub != null && vrCam.beta > ub) vrCam.beta = ub;
+              },
+              (error: any) => {
+                log('WARN', `VR: Errore giroscopio: ${error?.message || error}`);
+              },
+            );
+            log('INFO', 'VR: Camera con giroscopio attivata');
+          } catch (gyroErr: any) {
+            log('WARN', `VR: Giroscopio non disponibile: ${gyroErr?.message || gyroErr}`);
+          }
         }
 
         // Reset rendering group auto-clear for VR (init disables it for group 1 for AR occlusion)

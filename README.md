@@ -36,12 +36,16 @@ The application logic is located in the `demo` directory. To run the app:
     npx react-native run-android
     ```
 
-ISSUE FOR iOS: 
-- in boost.podspec change url into 'archives.boost.io/release'
-- in XCODE > Pods (blue icon) > TARGETS > React-Core > Change iOS version to 13.4
-- in XCODE > Pods (blue icon) > TARGETS > react-native-compass-heading > Change iOS version to 13.4
-- activate Metro Server in terminal and select "i" for "run on iOS"
-
-ISSUES: 3002, 7, 11
+HOW TO BUILD IN XCODE (for iOS): 
+- In demo/node_modules/react-native/third-party-podspecs/boost.podspec change url into 'https://archives.boost.io/release/...'
+- In XCODE > Pods (blue icon) > TARGETS > React-Core > Change iOS version to '13.4'
+- In XCODE > Pods (blue icon) > TARGETS > react-native-compass-heading > Change iOS version to '13.4'
+- Activate Metro Server in terminal:
+    ```bash
+    cd /Users/et-mac-1/Desktop/babylonjs/demo
+    npx react-native start
+    ```
+- Delete the app from the iPhone before rebuilding it 
+- Compile on XCode
 
 For detailed prerequisites and troubleshooting, please refer to the [Demo README](demo/README.md).

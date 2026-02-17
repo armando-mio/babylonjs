@@ -49,7 +49,32 @@
       ignoresPersistentStateOnLaunch = "NO"
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
-      allowLocationSimulation = "YES">
+      allowLocationSimulation = "YES"
+      enableGPUFrameCaptureMode = "3"
+      enableGPUValidationMode = "1"
+      gpuValidationMode = "disabled">
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "METAL_DEVICE_WRAPPER_TYPE"
+            value = ""
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "MTL_DEBUG_LAYER"
+            value = "0"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "MTL_DEBUG_LAYER_ERROR_MODE"
+            value = "ignore"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "MTL_SHADER_VALIDATION"
+            value = "0"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
       <BuildableProductRunnable
          runnableDebuggingMode = "0">
          <BuildableReference
