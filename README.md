@@ -42,7 +42,7 @@ HOW TO BUILD IN XCODE (for iOS):
 - In XCODE > Pods (blue icon) > TARGETS > react-native-compass-heading > Change iOS version to '13.4'
 - Activate Metro Server in terminal:
     ```bash
-    cd /Users/et-mac-1/Desktop/babylonjs/demo
+    cd demo
     npx react-native start
     ```
 - Delete the app from the iPhone before rebuilding it 
