@@ -36,6 +36,12 @@ The application logic is located in the `demo` directory. To run the app:
     npx react-native run-android
     ```
 
-ISSUE FOR iOS: in boost.podspec change url into 'archives.boost.io/release'
+ISSUE FOR iOS: 
+- in boost.podspec change url into 'archives.boost.io/release'
+- in XCODE > Pods (blue icon) > TARGETS > React-Core > Change iOS version to 13.4
+- in XCODE > Pods (blue icon) > TARGETS > react-native-compass-heading > Change iOS version to 13.4
+- activate Metro Server in terminal and select "i" for "run on iOS"
+
+ISSUES: 3002, 7, 11
 
 For detailed prerequisites and troubleshooting, please refer to the [Demo README](demo/README.md).
