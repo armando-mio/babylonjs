@@ -40,12 +40,21 @@ HOW TO BUILD IN XCODE (for iOS):
 - In demo/node_modules/react-native/third-party-podspecs/boost.podspec change url into 'https://archives.boost.io/release/...'
 - In XCODE > Pods (blue icon) > TARGETS > React-Core > Change iOS version to '13.4'
 - In XCODE > Pods (blue icon) > TARGETS > react-native-compass-heading > Change iOS version to '13.4'
-- Activate Metro Server in terminal:
+- Activate Metro Server in terminal (if you are in debug mode):
     ```bash
     cd demo
     npx react-native start
     ```
 - Delete the app from the iPhone before rebuilding it 
 - Compile on XCode
+
+HOW TO REBUILD IN XCODE (for iOS): 
+    ```bash
+    cd ios
+    rm -rf Pods                                   
+    rm Podfile.lock                               
+    bundle exec pod install  
+    rm -rf ~/Library/Developer/Xcode/DerivedData/*
+    ```
 
 For detailed prerequisites and troubleshooting, please refer to the [Demo README](demo/README.md).

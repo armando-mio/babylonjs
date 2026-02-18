@@ -172,7 +172,7 @@ export const styles = StyleSheet.create({
   },
   statusBar: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 50 : 20,
+    top: Platform.OS === 'ios' ? 10 : 10,
     left: 16,
     right: 16,
     backgroundColor: COLORS.panelBg,
@@ -473,7 +473,7 @@ export const styles = StyleSheet.create({
   // ================= BUSSOLA 2D =================
   compassContainer: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 120 : 90,
+    top: Platform.OS === 'ios' ? 70 : 50,
     right: 16,
     alignItems: 'center',
     zIndex: 50,
