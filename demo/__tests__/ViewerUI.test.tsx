@@ -82,6 +82,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof ViewerUI>> = {
     goBackToGallery: jest.fn(),
     createAtCenter: jest.fn(),
     removeSelectedInstance: jest.fn(),
+    canPlaceOnSurface: false,
     ...overrides,
   };
 }

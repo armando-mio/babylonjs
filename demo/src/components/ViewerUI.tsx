@@ -54,6 +54,7 @@ interface ViewerUIProps {
   createAtCenter: () => void;
   removeSelectedInstance: () => void;
   toggleManipulator?: () => void;
+  canPlaceOnSurface: boolean;
   vrFrozen?: boolean;
   toggleVRFreeze?: () => void;
 }
@@ -92,6 +93,7 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
   goBackToGallery,
   createAtCenter,
   removeSelectedInstance,
+  canPlaceOnSurface,
   vrFrozen,
   toggleVRFreeze,
 }) => {
@@ -125,6 +127,7 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
   };
 
   const hasSelection = !!selectedInstance;
+  const placementOk = viewerMode === 'VR' || canPlaceOnSurface;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -206,8 +209,11 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
             )}
 
             {xrSession && (
-              <TouchableOpacity style={styles.createBtn} onPress={createAtCenter}>
-                <Plus color="#fff" size={32} strokeWidth={3} />
+              <TouchableOpacity 
+                style={[styles.createBtn, !placementOk && styles.createBtnDisabled]} 
+                onPress={createAtCenter}
+                disabled={!placementOk}>
+                <Plus color={placementOk ? "#fff" : "#666"} size={32} strokeWidth={3} />
               </TouchableOpacity>
             )}
           </View>
