@@ -3,7 +3,6 @@ import {
   Vector3,
   Color3,
   Color4,
-  ArcRotateCamera,
   MeshBuilder,
   StandardMaterial,
   ShadowGenerator,
@@ -17,8 +16,8 @@ export function createVRWorld(scene: Scene, shadowGen: ShadowGenerator | null): 
   scene.clearColor = new Color4(0.45, 0.7, 0.95, 1);
 
   // Sky dome
-  const skyDome = MeshBuilder.CreateSphere('vrSkyDome', {diameter: 100, segments: 16}, scene);
-  skyDome.position.y = GROUND_Y + 1.6;
+  const skyDome = MeshBuilder.CreateSphere('vrSkyDome', {diameter: 200, segments: 16}, scene);
+  skyDome.position.y = 0;
   const skyMat = new StandardMaterial('vrSkyDomeMat', scene);
   skyMat.diffuseColor = new Color3(0.45, 0.7, 0.95);
   skyMat.emissiveColor = new Color3(0.35, 0.55, 0.85);
@@ -27,7 +26,7 @@ export function createVRWorld(scene: Scene, shadowGen: ShadowGenerator | null): 
   skyMat.backFaceCulling = false;
   skyDome.material = skyMat;
   skyDome.isPickable = false;
-  skyDome.renderingGroupId = 0; // Render before group 1 (models)
+  skyDome.renderingGroupId = 0;
 
   // Ground (reuse shadowGround)
   const sg = scene.getMeshByName('shadowGround');
@@ -40,6 +39,7 @@ export function createVRWorld(scene: Scene, shadowGen: ShadowGenerator | null): 
       mat.alpha = 1;
     }
     sg.isVisible = true;
+    sg.renderingGroupId = 1;
   }
 
   // VR grid

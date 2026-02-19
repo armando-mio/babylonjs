@@ -47,7 +47,8 @@ import {useGPS} from './src/hooks/useGPS';
 import {useCompass} from './src/hooks/useCompass';
 import {createVRWorld} from './src/scene/vrWorld';
 import {createSunSphere} from './src/scene/sunSphere';
-import {setupPlaneDetection, setupMeshDetection} from './src/scene/planeDetection';
+import {setupPlaneDetection, PlaneDetectionResult} from './src/scene/planeDetection';
+import {configureARRendering, configureVRRendering, resetRendering} from './src/scene/occlusion';
 import {GalleryScreen} from './src/components/GalleryScreen';
 import {ViewerUI} from './src/components/ViewerUI';
 
@@ -79,6 +80,7 @@ const App = () => {
   // Interaction state
   const [selectedInstance, setSelectedInstance] = useState<AbstractMesh | null>(null);
   const [objectsPlaced, setObjectsPlaced] = useState(0);
+  const [canPlaceOnSurface, setCanPlaceOnSurface] = useState(false);
 
   // Manipulation state
   const [showManipulator, setShowManipulator] = useState(false);
@@ -106,7 +108,11 @@ const App = () => {
   const loadedMeshesRef = useRef<AbstractMesh[]>([]);
   const dirLightRef = useRef<DirectionalLight | null>(null);
   const modelRootRef = useRef<TransformNode | null>(null);
-  const detectedPlaneMeshesRef = useRef<Map<number, Mesh>>(new Map());
+  const planeDetectionRef = useRef<PlaneDetectionResult | null>(null);
+  const reticleTargetPosRef = useRef<Vector3 | null>(null);
+  // Stores per-placed-instance WebXR anchor (null = no anchor yet for that instance)
+  const placedAnchorsRef = useRef<Map<TransformNode, any>>(new Map());
+  const anchorSystemRef = useRef<any>(null);
   const compassRootRef = useRef<TransformNode | null>(null);
   const sunSphereRef = useRef<Mesh | null>(null);
   const vrActiveRef = useRef(false);
@@ -121,6 +127,9 @@ const App = () => {
   const xrHitTestObserverRef = useRef<any>(null);
   const xrTrackingObserverRef = useRef<any>(null);
   const xrStartingRef = useRef(false);
+  const placingRef = useRef(false);
+  const arFloorYRef = useRef<number>(0);
+  const canPlaceOnSurfaceRef = useRef(false);
   const originalMaterialsRef = useRef<Map<string, {
     // StandardMaterial props
     diffuse?: Color3;
@@ -168,6 +177,20 @@ const App = () => {
 
   // ========== PLACE MODEL COPY AT POSITION ==========
   const placeModelAt = useCallback(async (position: Vector3, scn: Scene, model: ModelData) => {
+    // Guard: prevent concurrent placements and placement during disposal
+    if (placingRef.current) {
+      log('WARN', 'Piazzamento già in corso, ignorato');
+      return;
+    }
+    if (disposingRef.current) {
+      log('WARN', 'Disposal in corso, piazzamento ignorato');
+      return;
+    }
+    if (scn.isDisposed) {
+      log('WARN', 'Scena disposta, piazzamento ignorato');
+      return;
+    }
+    placingRef.current = true;
     const instName = `placed_${Date.now()}`;
     log('INFO', `Piazzamento ${model.name} a (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
     try {
@@ -185,10 +208,11 @@ const App = () => {
         }
       });
 
-      // Normalize
+      // Normalize — skip meshes with no geometry (e.g. __root__) so bounding box is accurate
       let pMin = new Vector3(Infinity, Infinity, Infinity);
       let pMax = new Vector3(-Infinity, -Infinity, -Infinity);
       result.meshes.forEach(mesh => {
+        if (mesh.getTotalVertices && mesh.getTotalVertices() === 0) return;
         mesh.computeWorldMatrix(true);
         const bi = mesh.getBoundingInfo();
         if (bi) {
@@ -201,11 +225,12 @@ const App = () => {
       const pNormScale = TARGET_MODEL_SIZE / pMaxDim;
       instRoot.scaling = new Vector3(pNormScale, pNormScale, pNormScale);
 
-      // Position bottom on reticle
+      // Position bottom on reticle — only consider meshes with actual geometry
       result.meshes.forEach(m => m.computeWorldMatrix(true));
       let scaledMin = new Vector3(Infinity, Infinity, Infinity);
       let scaledMax = new Vector3(-Infinity, -Infinity, -Infinity);
       result.meshes.forEach(mesh => {
+        if (mesh.getTotalVertices && mesh.getTotalVertices() === 0) return;
         const bi = mesh.getBoundingInfo();
         if (bi) {
           scaledMin = Vector3.Minimize(scaledMin, bi.boundingBox.minimumWorld);
@@ -218,7 +243,7 @@ const App = () => {
       const modelCenterZ = (scaledMin.z + scaledMax.z) / 2;
       instRoot.position = new Vector3(
         position.x - modelCenterX,
-        position.y - modelBottomY,
+        position.y - modelBottomY + 0.005, // +5mm above surface to prevent z-fighting with occluders
         position.z - modelCenterZ,
       );
 
@@ -230,8 +255,32 @@ const App = () => {
       selectInstance(instRoot);
       setStatus(`${model.name} piazzato!`);
       log('INFO', `Piazzato: ${instName} baseScale=${pNormScale.toFixed(4)}`);
+
+      // Create an AR anchor at the placement position to stabilise the object
+      // against tracking drift / re-localisation.
+      if (anchorSystemRef.current) {
+        try {
+          const Quaternion = (await import('@babylonjs/core')).Quaternion;
+          anchorSystemRef.current.addAnchorAtPositionAndRotationAsync(
+            instRoot.position.clone(),
+            Quaternion.Identity(),
+          ).then((anchor: any) => {
+            if (anchor) {
+              placedAnchorsRef.current.set(instRoot, anchor);
+              log('INFO', `AR: Anchor created for ${instName}`);
+            }
+          }).catch((ancErr: any) => {
+            log('WARN', `AR: Anchor creation failed: ${ancErr?.message || ancErr}`);
+          });
+        } catch (ancErr: any) {
+          log('WARN', `AR: Anchor not available: ${ancErr?.message || ancErr}`);
+        }
+      }
     } catch (err: any) {
       log('ERROR', `Errore piazzamento: ${err.message}`);
+      setStatus(`Errore piazzamento: ${err.message}`);
+    } finally {
+      placingRef.current = false;
     }
   }, [selectInstance]);
 
@@ -245,6 +294,14 @@ const App = () => {
     }
     inst.dispose();
     placedInstancesRef.current = placedInstancesRef.current.filter(n => n !== inst);
+    // Remove the anchor attached to this instance
+    try {
+      const anchor = placedAnchorsRef.current.get(inst as TransformNode);
+      if (anchor && anchorSystemRef.current) {
+        anchorSystemRef.current.removeAnchor(anchor);
+      }
+    } catch (e) {}
+    placedAnchorsRef.current.delete(inst as TransformNode);
     selectInstance(null);
     setObjectsPlaced(prev => Math.max(0, prev - 1));
     log('INFO', `Rimosso: ${name}`);
@@ -276,45 +333,48 @@ const App = () => {
     forceRender(n => n + 1);
   }, []);
 
-  // ========== CROSS-MODEL TEXTURE: Collect meshes from ALL placed instances + preview ==========
+  // ========== TEXTURE: Collect meshes from SELECTED instance (or all if none selected) ==========
   const refreshMeshList = useCallback((target?: TransformNode | null) => {
     const list: MeshListEntry[] = [];
     const excludeNames = new Set(['__root__', 'shadowGround', 'hitTestMarker', 'arGrid']);
 
-    // Collect from all placed instances
-    for (const inst of placedInstancesRef.current) {
-      const sourceName = (inst as any)._modelName || inst.name;
-      const meshes = inst.getChildMeshes().filter(
+    // Determine which instance to show meshes for:
+    // Priority: explicit target → currently selected instance → all instances
+    const activeTarget = target || selectedInstanceRef.current;
+
+    if (activeTarget) {
+      // Show only the selected/target instance's meshes
+      const sourceName = (activeTarget as any)._modelName || activeTarget.name;
+      const meshes = activeTarget.getChildMeshes().filter(
         m => m.material && !excludeNames.has(m.name),
       );
       meshes.forEach((m, i) => {
         list.push({name: m.name || `mesh_${i}`, mesh: m, sourceName});
       });
-    }
+    } else {
+      // No selection — collect from all placed instances
+      for (const inst of placedInstancesRef.current) {
+        const sourceName = (inst as any)._modelName || inst.name;
+        const meshes = inst.getChildMeshes().filter(
+          m => m.material && !excludeNames.has(m.name),
+        );
+        meshes.forEach((m, i) => {
+          list.push({name: m.name || `mesh_${i}`, mesh: m, sourceName});
+        });
+      }
 
-    // Also include preview model root if it has meshes
-    if (modelRootRef.current) {
-      const sourceName = selectedModel?.name || 'Preview';
-      const meshes = modelRootRef.current.getChildMeshes().filter(
-        m => m.material && !excludeNames.has(m.name),
-      );
-      meshes.forEach((m, i) => {
-        // Avoid duplicates (if a placed instance shares the same mesh)
-        if (!list.some(e => e.mesh === m)) {
-          list.push({name: m.name || `preview_${i}`, mesh: m, sourceName});
-        }
-      });
-    }
-
-    // If a specific target was given and it's not in the list yet (e.g., selected instance only)
-    if (target && !list.some(e => target.getChildMeshes().includes(e.mesh as any))) {
-      const sourceName = (target as any)._modelName || target.name;
-      const meshes = target.getChildMeshes().filter(
-        m => m.material && !excludeNames.has(m.name),
-      );
-      meshes.forEach((m, i) => {
-        list.push({name: m.name || `mesh_${i}`, mesh: m, sourceName});
-      });
+      // Also include preview model root if it has meshes
+      if (modelRootRef.current) {
+        const sourceName = selectedModel?.name || 'Preview';
+        const meshes = modelRootRef.current.getChildMeshes().filter(
+          m => m.material && !excludeNames.has(m.name),
+        );
+        meshes.forEach((m, i) => {
+          if (!list.some(e => e.mesh === m)) {
+            list.push({name: m.name || `preview_${i}`, mesh: m, sourceName});
+          }
+        });
+      }
     }
 
     setMeshListForTexture(list);
@@ -604,10 +664,11 @@ const App = () => {
         loadedMeshesRef.current.push(mesh);
       });
 
-      // Normalize
+      // Normalize — skip meshes with no geometry (e.g. __root__) so bounding box is accurate
       let minVec = new Vector3(Infinity, Infinity, Infinity);
       let maxVec = new Vector3(-Infinity, -Infinity, -Infinity);
       result.meshes.forEach(mesh => {
+        if (mesh.getTotalVertices && mesh.getTotalVertices() === 0) return;
         mesh.computeWorldMatrix(true);
         const bi = mesh.getBoundingInfo();
         if (bi) {
@@ -649,7 +710,9 @@ const App = () => {
     try {
       const newScene = new Scene(engine);
       newScene.clearColor = new Color4(0.1, 0.1, 0.15, 1);
-      newScene.setRenderingAutoClearDepthStencil(1, false);
+      // NOTE: Do NOT set setRenderingAutoClearDepthStencil(1, false) here.
+      // That config is only needed for AR occlusion and is set when entering AR mode.
+      // Setting it here would prevent VR world (renderingGroup 1) from rendering.
       sceneRef.current = newScene;
 
       // Camera
@@ -707,18 +770,20 @@ const App = () => {
       shadowGround.isPickable = false;
       shadowGround.renderingGroupId = 1;
 
-      // Hit-test reticle
+      // Hit-test reticle — base diameter 0.20m, will be dynamically scaled by distance
       const reticle = MeshBuilder.CreateTorus('hitTestMarker', {diameter: 0.20, thickness: 0.015, tessellation: 32}, newScene);
       const reticleMat = new StandardMaterial('hitTestMarkerMat', newScene);
       reticleMat.diffuseColor = new Color3(0, 1, 0);
       reticleMat.emissiveColor = new Color3(0, 1, 0);
       reticleMat.alpha = 0.9;
       reticleMat.backFaceCulling = false;
+      reticleMat.disableDepthWrite = true;
       reticle.material = reticleMat;
       reticle.isVisible = false;
       reticle.isPickable = false;
-      reticle.renderingGroupId = 1;
+      reticle.renderingGroupId = 2;
       hitTestMarkerRef.current = reticle;
+      reticleTargetPosRef.current = null;
 
       // Pointer / tap handler
       newScene.onPointerObservable.add(evtData => {
@@ -797,21 +862,15 @@ const App = () => {
           scene.meshes.filter(m =>
             m.name.startsWith('vrMountain_') || m.name.startsWith('vrTrunk_') ||
             m.name.startsWith('vrCrown_') || m.name.startsWith('vrCloud_') ||
-            m.name.startsWith('detectedPlane_') || m.name === 'vrSkyDome',
+            m.name === 'vrSkyDome',
           ).forEach(m => m.dispose());
         }
 
-        // Clean up detected planes
-        detectedPlaneMeshesRef.current.forEach(m => {
-          try {
-            const occ = (m as any)._occluderMesh as Mesh | undefined;
-            if (occ) occ.dispose();
-            const edge = (m as any)._edgeMesh as Mesh | undefined;
-            if (edge) edge.dispose();
-            m.dispose();
-          } catch (e) {}
-        });
-        detectedPlaneMeshesRef.current.clear();
+        // Clean up plane detection
+        if (planeDetectionRef.current) {
+          planeDetectionRef.current.dispose();
+          planeDetectionRef.current = null;
+        }
 
         if (compassRootRef.current) {
           compassRootRef.current.getChildMeshes().forEach(m => m.dispose());
@@ -833,6 +892,7 @@ const App = () => {
 
         lastHitPosRef.current = null;
         lastTrackingRef.current = null;
+        arFloorYRef.current = Number.NaN;
         setSurfaceDetected(false);
         surfaceDetectedRef.current = false;
         if (trackingTimerRef.current) {
@@ -845,14 +905,23 @@ const App = () => {
         if (sg) {
           sg.isVisible = true;
           const mat = sg.material as StandardMaterial;
-          if (mat) { mat.alpha = 1; mat.diffuseColor = new Color3(0.3, 0.3, 0.35); }
+          if (mat) {
+            mat.alpha = 1;
+            mat.diffuseColor = new Color3(0.3, 0.3, 0.35);
+            mat.disableDepthWrite = false;
+          }
+          sg.renderingGroupId = 1;
+        }
+
+        if (hitTestMarkerRef.current) {
+          hitTestMarkerRef.current.renderingGroupId = 2;
         }
 
         if (modelRootRef.current) modelRootRef.current.setEnabled(true);
         scene.clearColor = new Color4(0.1, 0.1, 0.15, 1);
 
-        // Restore AR rendering group settings
-        scene.setRenderingAutoClearDepthStencil(1, false);
+        // Restore default rendering group settings (all groups auto-clear)
+        resetRendering(scene);
 
         if (gyroSubRef.current) {
           gyroSubRef.current.unsubscribe();
@@ -860,9 +929,29 @@ const App = () => {
         }
 
         if (xrSession) await xrSession.exitXRAsync();
+
+        // Dispose XR experience helper to fully clean up AR state.
+        // Without this, the WebXR camera remains as scene.activeCamera and
+        // subsequent VR entry gets a dead camera → black screen.
+        if (xrRef.current) {
+          try { xrRef.current.dispose(); } catch (e) {}
+          xrRef.current = null;
+        }
+
+        // Explicitly restore the ArcRotateCamera as active camera.
+        // After AR, scene.activeCamera may still point to the WebXR camera.
+        const mainCam = scene.getCameraByName('mainCamera') as ArcRotateCamera;
+        if (mainCam) {
+          scene.activeCamera = mainCam;
+          mainCam.attachControl();
+          log('INFO', 'Camera ArcRotateCamera ripristinata dopo AR');
+        }
+
         vrActiveRef.current = false;
         vrFrozenRef.current = false;
         setVrFrozen(false);
+        canPlaceOnSurfaceRef.current = false;
+        setCanPlaceOnSurface(false);
         setXrSession(undefined);
         log('INFO', `Sessione ${viewerMode} terminata`);
         setStatus(`${viewerMode} disattivata.`);
@@ -871,7 +960,7 @@ const App = () => {
 
       // ===== ENTERING =====
       if (xrStartingRef.current) {
-        log('WARN', 'XR/VR già in fase di avvio, skip');
+        log('INFO', 'XR/VR già in fase di avvio, attendo...');
         return;
       }
       xrStartingRef.current = true;
@@ -885,9 +974,28 @@ const App = () => {
 
         if (modelRootRef.current) modelRootRef.current.setEnabled(false);
 
-        // Configure camera for VR
-        const vrCam = scene.activeCamera as ArcRotateCamera;
+        // Clean up any stale WebXR state from a previous AR session.
+        // This is defensive — goBackToGallery should have cleaned up,
+        // but if the scene was recreated while native XR was still active,
+        // ensure there are no stale XR cameras or render targets.
+        if (xrRef.current) {
+          log('WARN', 'VR: rilevato stale XR ref — disposing');
+          try { xrRef.current.dispose(); } catch (e) {}
+          xrRef.current = null;
+        }
+        // Remove any stale WebXR cameras that might linger
+        scene.cameras.forEach(cam => {
+          if (cam.name && cam.name.toLowerCase().includes('webxr') && cam.name !== 'mainCamera') {
+            log('INFO', `VR: rimozione camera stale: ${cam.name}`);
+            try { cam.dispose(); } catch (e) {}
+          }
+        });
+
+        // Explicitly get the ArcRotateCamera by name — scene.activeCamera may still
+        // be a dead WebXR camera if AR was used previously.
+        const vrCam = (scene.getCameraByName('mainCamera') || scene.activeCamera) as ArcRotateCamera;
         if (vrCam) {
+          scene.activeCamera = vrCam;
           vrCam.target = new Vector3(0, GROUND_Y + 1.6, 0);
           vrCam.beta = Math.PI / 2;
           vrCam.radius = 5;
@@ -926,9 +1034,8 @@ const App = () => {
           }
         }
 
-        // Reset rendering group auto-clear for VR (init disables it for group 1 for AR occlusion)
-        scene.setRenderingAutoClearDepthStencil(0, true, true, true);
-        scene.setRenderingAutoClearDepthStencil(1, true, true, true);
+        // Configure rendering groups for VR
+        configureVRRendering(scene);
 
         // Create VR world (sky, mountains, trees, clouds)
         const vrGridPlane = createVRWorld(scene, shadowGenRef.current);
@@ -938,10 +1045,19 @@ const App = () => {
         setSurfaceDetected(true);
 
         // Reticle
-        if (hitTestMarkerRef.current) hitTestMarkerRef.current.isVisible = true;
+        if (hitTestMarkerRef.current) {
+          hitTestMarkerRef.current.isVisible = true;
+          hitTestMarkerRef.current.renderingGroupId = 2;
+          // Ensure reticle is green in VR mode
+          const rMat = hitTestMarkerRef.current.material as StandardMaterial;
+          if (rMat) {
+            rMat.diffuseColor = new Color3(0, 1, 0);
+            rMat.emissiveColor = new Color3(0, 1, 0);
+          }
+        }
         lastHitPosRef.current = new Vector3(0, GROUND_Y, -2);
         if (hitTestMarkerRef.current) {
-          hitTestMarkerRef.current.position.set(0, GROUND_Y + 0.005, -2);
+          hitTestMarkerRef.current.position.set(0, GROUND_Y + 0.02, -2);
         }
 
         // VR beforeRender: update reticle from camera
@@ -956,7 +1072,7 @@ const App = () => {
               const hitX = camPos.x + t * camForward.x;
               const hitZ = camPos.z + t * camForward.z;
               hitTestMarkerRef.current.isVisible = true;
-              hitTestMarkerRef.current.position.set(hitX, GROUND_Y + 0.005, hitZ);
+              hitTestMarkerRef.current.position.set(hitX, GROUND_Y + 0.02, hitZ);
               lastHitPosRef.current = new Vector3(hitX, GROUND_Y, hitZ);
             }
           }
@@ -986,6 +1102,8 @@ const App = () => {
         }
 
         xrStartingRef.current = false;
+        canPlaceOnSurfaceRef.current = true;
+        setCanPlaceOnSurface(true);
         setXrSession({exitXRAsync: async () => {}} as any);
         setStatus('VR ATTIVA! Mondo virtuale senza fotocamera.');
         log('INFO', '=== VR COMPLETAMENTE OPERATIVA ===');
@@ -993,6 +1111,13 @@ const App = () => {
       }
 
       // ===== AR MODE =====
+      // Reset AR floor tracking (unknown until we get a hit/plane)
+      arFloorYRef.current = Number.NaN;
+      lastHitPosRef.current = null;
+      canPlaceOnSurfaceRef.current = false;
+      setCanPlaceOnSurface(false);
+      if (hitTestMarkerRef.current) hitTestMarkerRef.current.isVisible = false;
+
       const xr = await scene.createDefaultXRExperienceAsync({
         disableDefaultUI: true,
         disableTeleportation: true,
@@ -1000,28 +1125,55 @@ const App = () => {
       });
       xrRef.current = xr;
 
-      const session = await xr.baseExperience.enterXRAsync('immersive-ar', 'unbounded', xr.renderTarget);
+      const referenceSpaceOrder: Array<'unbounded' | 'local-floor' | 'local' | 'viewer'> = [
+        'unbounded',
+        'local-floor',
+        'local',
+        'viewer',
+      ];
+      let session: any = null;
+      let lastEnterErr: any = null;
+      for (const refSpace of referenceSpaceOrder) {
+        try {
+          session = await xr.baseExperience.enterXRAsync('immersive-ar', refSpace, xr.renderTarget);
+          log('INFO', `Sessione AR avviata con reference space: ${refSpace}`);
+          break;
+        } catch (enterErr: any) {
+          lastEnterErr = enterErr;
+          log('WARN', `AR: reference space ${refSpace} non disponibile: ${enterErr?.message || enterErr}`);
+        }
+      }
+      if (!session) {
+        throw lastEnterErr || new Error('Nessun reference space AR disponibile');
+      }
       log('INFO', 'Sessione AR avviata');
 
       // AR shadow ground
       const sg = scene.getMeshByName('shadowGround');
       if (sg) {
         sg.receiveShadows = true;
+        sg.position.y = Number.isFinite(arFloorYRef.current) ? arFloorYRef.current : 0;
         const mat = sg.material as StandardMaterial;
-        if (mat) { mat.diffuseColor = new Color3(0.5, 0.5, 0.5); mat.specularColor = new Color3(0, 0, 0); mat.alpha = 0.35; }
+        if (mat) {
+          mat.diffuseColor = new Color3(0.5, 0.5, 0.5);
+          mat.specularColor = new Color3(0, 0, 0);
+          mat.alpha = 0.35;
+          mat.disableDepthWrite = true;
+        }
       }
 
       if (modelRootRef.current) modelRootRef.current.setEnabled(false);
 
       // AR grid
       const grid = MeshBuilder.CreateGround('arGrid', {width: 20, height: 20, subdivisions: 40}, scene);
-      grid.position.y = GROUND_Y;
+      grid.position.y = Number.isFinite(arFloorYRef.current) ? arFloorYRef.current : 0;
       const gridMat = new StandardMaterial('gridMat', scene);
       gridMat.diffuseColor = new Color3(0, 0.6, 0.6);
       gridMat.emissiveColor = new Color3(0, 0.15, 0.15);
       gridMat.alpha = 0.15;
       gridMat.wireframe = true;
       gridMat.backFaceCulling = false;
+      gridMat.disableDepthWrite = true;
       grid.material = gridMat;
       grid.isPickable = false;
       grid.renderingGroupId = 1;
@@ -1031,10 +1183,22 @@ const App = () => {
 
       // WebXR Hit Test
       try {
-        const hitTestFeature = xr.baseExperience.featuresManager.enableFeature(
-          WebXRFeatureName.HIT_TEST, 'latest',
-          {offsetRay: new Vector3(0, 0, 0), entityTypes: ['plane', 'point']},
-        ) as WebXRHitTest;
+        const hitTestOptions = {offsetRay: new Vector3(0, 0, 0), entityTypes: ['plane', 'point', 'mesh']};
+        let hitTestFeature: WebXRHitTest | null = null;
+        try {
+          hitTestFeature = xr.baseExperience.featuresManager.enableFeature(
+            WebXRFeatureName.HIT_TEST,
+            'stable',
+            hitTestOptions,
+          ) as WebXRHitTest;
+        } catch (stableErr: any) {
+          log('INFO', `AR: HitTest stable non disponibile, fallback latest (${stableErr?.message || stableErr})`);
+          hitTestFeature = xr.baseExperience.featuresManager.enableFeature(
+            WebXRFeatureName.HIT_TEST,
+            'latest',
+            hitTestOptions,
+          ) as WebXRHitTest;
+        }
 
         if (hitTestFeature) {
           log('INFO', 'AR: WebXR HitTest abilitato');
@@ -1043,17 +1207,27 @@ const App = () => {
             if (results.length > 0) {
               const hit = results[0];
               hitTestTimestamp = Date.now();
+              const cam = xr.baseExperience.camera;
+              if (cam) {
+                const camPos = cam.globalPosition.clone();
+                const dist = Vector3.Distance(camPos, hit.position);
+                if (dist > 15) return; // Ignore outlier hits far from camera
+              }
               if (!surfaceDetectedRef.current) {
                 surfaceDetectedRef.current = true;
                 setSurfaceDetected(true);
                 log('INFO', 'AR: Superficie rilevata via HitTest');
               }
+              // Set target position for smooth interpolation (applied in per-frame observer)
+              reticleTargetPosRef.current = new Vector3(hit.position.x, hit.position.y + 0.02, hit.position.z);
               if (hitTestMarkerRef.current) {
                 hitTestMarkerRef.current.isVisible = true;
-                hitTestMarkerRef.current.position.copyFrom(hit.position);
-                hitTestMarkerRef.current.position.y += 0.005;
               }
               lastHitPosRef.current = hit.position.clone();
+              // Track the detected floor Y for AR fallback positioning
+              if (!Number.isFinite(arFloorYRef.current) || Math.abs(hit.position.y - arFloorYRef.current) < 1.5) {
+                arFloorYRef.current = hit.position.y;
+              }
             }
           });
         }
@@ -1061,44 +1235,93 @@ const App = () => {
         log('WARN', `AR: WebXR HitTest non disponibile: ${htErr.message}`);
       }
 
-      // Occlusion rendering groups
-      scene.setRenderingAutoClearDepthStencil(0, true, true, true);
-      scene.setRenderingAutoClearDepthStencil(1, false, false, false);
-      log('INFO', 'AR: Occlusion rendering groups configurati');
-
-      // Plane detection (refactored module — with false-positive fixes)
-      const planeDetectionActive = setupPlaneDetection(xr, scene, detectedPlaneMeshesRef, surfaceDetectedRef, setSurfaceDetected);
-      if (!planeDetectionActive) {
-        log('INFO', 'AR: Plane detection non attivo, fallback solo HitTest');
+      // Enable WebXR Anchor system for placed-object stabilization
+      try {
+        anchorSystemRef.current = xr.baseExperience.featuresManager.enableFeature(
+          WebXRFeatureName.ANCHOR_SYSTEM,
+          'stable',
+        );
+        if (!anchorSystemRef.current) throw new Error('null');
+        log('INFO', 'AR: Anchor system enabled');
+      } catch {
+        try {
+          anchorSystemRef.current = xr.baseExperience.featuresManager.enableFeature(
+            WebXRFeatureName.ANCHOR_SYSTEM,
+            'latest',
+          );
+          log('INFO', 'AR: Anchor system enabled (latest)');
+        } catch (ancErr: any) {
+          anchorSystemRef.current = null;
+          log('WARN', `AR: Anchor system unavailable: ${ancErr?.message || ancErr}`);
+        }
       }
 
-      // Mesh detection
-      setupMeshDetection(xr, scene);
+      // Configure AR rendering groups (occlusion)
+      configureARRendering(scene);
+
+      // Plane detection
+      planeDetectionRef.current = setupPlaneDetection({xr, scene, enableOccluders: true});
 
       // Camera raycast fallback
       surfaceDetectedRef.current = true;
       setSurfaceDetected(true);
       log('INFO', 'AR: Raycast camera fallback attivo');
 
+      // Smoothing factor for per-frame reticle lerp (0 = no movement, 1 = instant snap).
+      // 0.18 keeps motion fluid without being too laggy.
+      const RETICLE_LERP = 0.18;
+      // Base reticle scale at 1 m distance.  At distance d, scale = d * BASE_SCALE.
+      const RETICLE_BASE_SCALE = 1.0;
+      // When no surface data is available at all, project the reticle this many metres in front.
+      const RETICLE_FALLBACK_DIST = 1.5;
+
       xrFrameObserverRef.current = xr.baseExperience.sessionManager.onXRFrameObservable.add(() => {
         if (disposingRef.current) return;
         if (!hitTestMarkerRef.current || !xr.baseExperience.camera) return;
         try {
         const cam = xr.baseExperience.camera;
+        const camPos = cam.globalPosition.clone();
+        const camForward = cam.getDirection(Vector3.Forward());
         const now = Date.now();
-        const hitTestRecentlyActive = (now - hitTestTimestamp) < 500;
+        const hitTestRecentlyActive = (now - hitTestTimestamp) < 300;
+
+        // Feed camera height to plane detection for plausibility checks
+        if (planeDetectionRef.current) {
+          planeDetectionRef.current.setCameraY(camPos.y);
+        }
+
+        // ── Update anchor transforms for all placed objects ──
+        if (anchorSystemRef.current) {
+          placedAnchorsRef.current.forEach((anchor, node) => {
+            if (!anchor || node.isDisposed()) return;
+            try {
+              const anchorPos = anchor.position;
+              const anchorRot = anchor.rotationQuaternion;
+              if (anchorPos) {
+                node.position.copyFrom(anchorPos);
+              }
+              if (anchorRot && node.rotationQuaternion) {
+                node.rotationQuaternion.copyFrom(anchorRot);
+              }
+            } catch (anchorErr) {
+              // skip if anchor is stale
+            }
+          });
+        }
+
+        // ── Prefer fresh hit-test result (most accurate) ──
+        // (target already set in hitTest observer above when fresh)
 
         if (!hitTestRecentlyActive) {
-          const camForward = cam.getDirection(Vector3.Forward());
-          const camPos = cam.globalPosition.clone();
+          // ── Fallback 1: raycast against detected plane meshes ──
+          const ray = new Ray(camPos, camForward, 15);
+          let closestDist = Infinity;
           let bestHitPos: Vector3 | null = null;
 
-          if (detectedPlaneMeshesRef.current.size > 0) {
-            const ray = new Ray(camPos, camForward, 15);
-            let closestDist = Infinity;
-            detectedPlaneMeshesRef.current.forEach((planeMesh) => {
-              if (!planeMesh.isDisposed()) {
-                const pickInfo = ray.intersectsMesh(planeMesh, false);
+          if (planeDetectionRef.current) {
+            planeDetectionRef.current.planes.forEach((plane) => {
+              if (!plane.visualMesh.isDisposed()) {
+                const pickInfo = ray.intersectsMesh(plane.visualMesh, false);
                 if (pickInfo.hit && pickInfo.pickedPoint && pickInfo.distance < closestDist) {
                   closestDist = pickInfo.distance;
                   bestHitPos = pickInfo.pickedPoint.clone();
@@ -1109,18 +1332,130 @@ const App = () => {
 
           if (bestHitPos) {
             const hp = bestHitPos as Vector3;
+            reticleTargetPosRef.current = new Vector3(hp.x, hp.y + 0.02, hp.z);
             hitTestMarkerRef.current.isVisible = true;
-            hitTestMarkerRef.current.position.set(hp.x, hp.y + 0.005, hp.z);
             lastHitPosRef.current = hp;
-          } else if (Math.abs(camForward.y) > 0.001) {
-            const t = (GROUND_Y - camPos.y) / camForward.y;
-            if (t > 0.2 && t < 15) {
-              const hitX = camPos.x + t * camForward.x;
-              const hitZ = camPos.z + t * camForward.z;
-              hitTestMarkerRef.current.isVisible = true;
-              hitTestMarkerRef.current.position.set(hitX, GROUND_Y + 0.005, hitZ);
-              lastHitPosRef.current = new Vector3(hitX, GROUND_Y, hitZ);
+            arFloorYRef.current = hp.y;
+          } else {
+            // ── Fallback 2: project camera ray onto known floor plane ──
+            const floorY = arFloorYRef.current;
+            let projected = false;
+            if (Number.isFinite(floorY) && Math.abs(camForward.y) > 0.001) {
+              const t = (floorY - camPos.y) / camForward.y;
+              if (t > 0.2 && t < 15) {
+                const hitX = camPos.x + t * camForward.x;
+                const hitZ = camPos.z + t * camForward.z;
+                reticleTargetPosRef.current = new Vector3(hitX, floorY + 0.02, hitZ);
+                hitTestMarkerRef.current.isVisible = true;
+                lastHitPosRef.current = new Vector3(hitX, floorY, hitZ);
+                projected = true;
+              }
             }
+
+            if (!projected) {
+              // ── Fallback 3 (ALWAYS MOVE): project at fixed distance in front of camera ──
+              // This ensures the reticle NEVER freezes even if no surface is known.
+              const forward2D = new Vector3(camForward.x, 0, camForward.z);
+              const forward2DLen = Math.sqrt(forward2D.x * forward2D.x + forward2D.z * forward2D.z);
+              if (forward2DLen > 0.001) {
+                forward2D.scaleInPlace(1 / forward2DLen);
+                const groundY = Number.isFinite(arFloorYRef.current) ? arFloorYRef.current : camPos.y - 1.2;
+                const projX = camPos.x + forward2D.x * RETICLE_FALLBACK_DIST;
+                const projZ = camPos.z + forward2D.z * RETICLE_FALLBACK_DIST;
+                reticleTargetPosRef.current = new Vector3(projX, groundY + 0.02, projZ);
+                hitTestMarkerRef.current.isVisible = true;
+                lastHitPosRef.current = new Vector3(projX, groundY, projZ);
+              }
+            }
+          }
+        }
+
+        // ── Smooth reticle position via lerp ──
+        if (reticleTargetPosRef.current && hitTestMarkerRef.current) {
+          const cur = hitTestMarkerRef.current.position;
+          const tgt = reticleTargetPosRef.current;
+          // If the reticle hasn't been positioned yet, snap immediately
+          if (cur.x === 0 && cur.y === 0 && cur.z === 0) {
+            cur.copyFrom(tgt);
+          } else {
+            // Use a lerp factor that ramps up when the target is far away,
+            // so large position changes (new hit-test result) converge quickly
+            // while small everyday movements remain smooth.
+            const dist2 = Vector3.DistanceSquared(cur, tgt);
+            const adaptiveLerp = dist2 > 0.5 ? 0.4 : RETICLE_LERP; // snap fast if far
+            cur.x += (tgt.x - cur.x) * adaptiveLerp;
+            cur.y += (tgt.y - cur.y) * adaptiveLerp;
+            cur.z += (tgt.z - cur.z) * adaptiveLerp;
+          }
+
+          // ── Distance-based reticle scaling ──
+          const camPos = cam.globalPosition;
+          const dist = Vector3.Distance(camPos, cur);
+          const s = Math.max(0.3, dist * RETICLE_BASE_SCALE);
+          hitTestMarkerRef.current.scaling.set(s, s, s);
+        }
+
+        // ── Placement validity — update reticle colour (green = valid, red = invalid) ──
+        {
+          let placementValid = false;
+          if (hitTestMarkerRef.current?.isVisible && lastHitPosRef.current) {
+            const camP = cam.globalPosition;
+            const placeDist = Vector3.Distance(camP, lastHitPosRef.current);
+            if (placeDist <= 15) {
+              if (Number.isFinite(arFloorYRef.current)) {
+                const dy = Math.abs(lastHitPosRef.current.y - arFloorYRef.current);
+                placementValid = dy <= 1.5;
+              } else {
+                placementValid = true;
+              }
+            }
+          }
+          if (hitTestMarkerRef.current) {
+            const rMat = hitTestMarkerRef.current.material as StandardMaterial;
+            if (rMat) {
+              if (placementValid) {
+                rMat.diffuseColor.r = 0; rMat.diffuseColor.g = 1; rMat.diffuseColor.b = 0;
+                rMat.emissiveColor.r = 0; rMat.emissiveColor.g = 1; rMat.emissiveColor.b = 0;
+              } else {
+                rMat.diffuseColor.r = 1; rMat.diffuseColor.g = 0; rMat.diffuseColor.b = 0;
+                rMat.emissiveColor.r = 1; rMat.emissiveColor.g = 0; rMat.emissiveColor.b = 0;
+              }
+            }
+          }
+          if (placementValid !== canPlaceOnSurfaceRef.current) {
+            canPlaceOnSurfaceRef.current = placementValid;
+            setCanPlaceOnSurface(placementValid);
+          }
+        }
+
+        // Sync floor Y from plane detection manager
+        if (planeDetectionRef.current) {
+          const planeFloorY = planeDetectionRef.current.getFloorY();
+          if (Number.isFinite(planeFloorY)) {
+            arFloorYRef.current = planeFloorY;
+          }
+        }
+
+        // Sync surface-detected state
+        if (planeDetectionRef.current && planeDetectionRef.current.isSurfaceDetected()) {
+          if (!surfaceDetectedRef.current) {
+            surfaceDetectedRef.current = true;
+            setSurfaceDetected(true);
+          }
+        }
+
+        // Keep AR grid synced with detected floor height
+        if (groundPlaneRef.current && groundPlaneRef.current.name === 'arGrid') {
+          const floorY = arFloorYRef.current;
+          if (Number.isFinite(floorY) && Math.abs(groundPlaneRef.current.position.y - floorY) > 0.01) {
+            groundPlaneRef.current.position.y = floorY;
+          }
+        }
+        const sg = scene.getMeshByName('shadowGround');
+        if (sg) {
+          const floorY = arFloorYRef.current;
+          if (Number.isFinite(floorY) && Math.abs(sg.position.y - floorY) > 0.01) {
+            sg.position.y = floorY;
           }
         }
         } catch (frameErr) {
@@ -1128,9 +1463,14 @@ const App = () => {
         }
       });
 
-      // Sun sphere for AR
+      // Sun sphere for AR — align directional light to real sun but hide the visual sphere
       try {
         sunSphereRef.current = createSunSphere(scene, deviceLatRef.current, deviceLonRef.current, dirLightRef.current, true);
+        // Hide the visual sun meshes in AR — only light alignment matters
+        if (sunSphereRef.current) sunSphereRef.current.isVisible = false;
+        const sunGlowAR = scene.getMeshByName('sunGlow');
+        if (sunGlowAR) sunGlowAR.isVisible = false;
+        log('INFO', 'AR: Sole visivo nascosto (solo allineamento luce)');
       } catch (sunErr: any) {
         log('WARN', `Errore posizione sole: ${sunErr.message}`);
       }
@@ -1138,6 +1478,8 @@ const App = () => {
       setXrSession(session);
 
       session.onXRSessionEnded.add(() => {
+        anchorSystemRef.current = null;
+        placedAnchorsRef.current.clear();
         log('INFO', 'Sessione XR terminata (evento)');
         xrRef.current = null;
         lastTrackingRef.current = null;
@@ -1190,9 +1532,9 @@ const App = () => {
 
   // Auto-start XR/VR
   useEffect(() => {
-    if (sceneReady && modelLoaded && !xrSession && !vrActiveRef.current) {
+    if (sceneReady && modelLoaded && !xrSession && !vrActiveRef.current && !xrStartingRef.current) {
       const t = setTimeout(() => {
-        if (!xrSession && !vrActiveRef.current) {
+        if (!xrSession && !vrActiveRef.current && !xrStartingRef.current) {
           toggleXR().catch((e) => log('ERROR', `Auto-start XR failed: ${e?.message || e}`));
         }
       }, 300);
@@ -1231,6 +1573,10 @@ const App = () => {
     xrFrameObserverRef.current = null;
     xrHitTestObserverRef.current = null;
     xrTrackingObserverRef.current = null;
+    planeDetectionRef.current = null;
+    reticleTargetPosRef.current = null;
+    anchorSystemRef.current = null;
+    placedAnchorsRef.current.clear();
     originalMaterialsRef.current.clear();
 
     // CRITICAL: Delay all disposal to let BabylonNative's native async task queue drain.
@@ -1257,10 +1603,7 @@ const App = () => {
         placedInstancesRef.current = [];
       } catch (e) {}
       try {
-        detectedPlaneMeshesRef.current.forEach(m => {
-          try { const occ = (m as any)._occluderMesh as Mesh | undefined; if (occ) occ.dispose(); m.dispose(); } catch (e) {}
-        });
-        detectedPlaneMeshesRef.current.clear();
+        if (planeDetectionRef.current) { planeDetectionRef.current.dispose(); planeDetectionRef.current = null; }
       } catch (e) {}
       try {
         if (compassRootRef.current) {
@@ -1298,6 +1641,8 @@ const App = () => {
       setSelectedInstance(null);
       selectedInstanceRef.current = null;
       setObjectsPlaced(0);
+      setCanPlaceOnSurface(false);
+      canPlaceOnSurfaceRef.current = false;
       setStatus('Inizializzazione motore 3D...');
 
       // Switch screen (triggers EngineView unmount)
@@ -1322,46 +1667,85 @@ const App = () => {
     navigatingBackRef.current = true;
     disposingRef.current = true; // Block all frame/pointer callbacks immediately
 
-    // CRITICAL: Do NOT call exitXRAsync() — BabylonNative's native XR shutdown
-    // (libBabylonNative.so arcana task pipeline) triggers SIGSEGV by accessing
-    // already-freed native objects during the async exit process.
-    // Instead: remove all XR observables, null refs, and let doFullCleanupAndNavigate
-    // handle scene disposal + EngineView unmount (which tears down XR natively).
-
-    if (xrSession && !vrActiveRef.current && xrRef.current) {
-      log('INFO', 'AR: cleanup observers e skip exitXRAsync (prevenzione SIGSEGV nativo)');
-
-      // Remove ALL XR observables to prevent native callbacks from dispatching
+    const doExit = async () => {
+      // ── Step 0: Immediately dispose plane detection so its observables
+      // stop firing during exit. This prevents native callbacks from
+      // dispatching into already-freed BabylonNative objects.  ──
       try {
-        if (xrFrameObserverRef.current && xrRef.current?.baseExperience?.sessionManager?.onXRFrameObservable) {
-          xrRef.current.baseExperience.sessionManager.onXRFrameObservable.remove(xrFrameObserverRef.current);
-          xrFrameObserverRef.current = null;
-        }
-      } catch (e) {}
-      try {
-        if (xrHitTestObserverRef.current) {
-          xrHitTestObserverRef.current = null;
-        }
-      } catch (e) {}
-      try {
-        if (xrTrackingObserverRef.current && xrRef.current?.baseExperience?.camera?.onTrackingStateChanged) {
-          xrRef.current.baseExperience.camera.onTrackingStateChanged.remove(xrTrackingObserverRef.current);
-          xrTrackingObserverRef.current = null;
+        if (planeDetectionRef.current) {
+          planeDetectionRef.current.dispose();
+          planeDetectionRef.current = null;
         }
       } catch (e) {}
 
-      // Null out hitTestMarker and XR refs immediately
-      hitTestMarkerRef.current = null;
-      xrRef.current = null;
-      lastTrackingRef.current = null;
-      if (trackingTimerRef.current) {
-        clearTimeout(trackingTimerRef.current);
-        trackingTimerRef.current = null;
+      if (xrSession && !vrActiveRef.current && xrRef.current) {
+        log('INFO', 'AR: cleanup observers + exitXRAsync');
+
+        // Step 1: Remove ALL XR observables FIRST
+        try {
+          if (xrFrameObserverRef.current && xrRef.current?.baseExperience?.sessionManager?.onXRFrameObservable) {
+            xrRef.current.baseExperience.sessionManager.onXRFrameObservable.remove(xrFrameObserverRef.current);
+          }
+        } catch (e) {}
+        xrFrameObserverRef.current = null;
+
+        try {
+          if (xrHitTestObserverRef.current) {
+            // The hit-test observer is owned by the feature — just null our ref.
+            xrHitTestObserverRef.current = null;
+          }
+        } catch (e) {}
+
+        try {
+          if (xrTrackingObserverRef.current && xrRef.current?.baseExperience?.camera?.onTrackingStateChanged) {
+            xrRef.current.baseExperience.camera.onTrackingStateChanged.remove(xrTrackingObserverRef.current);
+          }
+        } catch (e) {}
+        xrTrackingObserverRef.current = null;
+
+        // Null out refs that per-frame callbacks read so even if a stray
+        // callback fires during the async gap it exits immediately.
+        hitTestMarkerRef.current = null;
+        reticleTargetPosRef.current = null;
+
+        // Step 2: Exit the XR session
+        try {
+          await xrSession.exitXRAsync();
+          log('INFO', 'AR: exitXRAsync completato');
+        } catch (exitErr: any) {
+          log('WARN', `AR: exitXRAsync errore: ${exitErr?.message || exitErr}`);
+        }
+
+        // Step 3: Dispose the XR experience helper
+        const xrHelper = xrRef.current;
+        xrRef.current = null;  // null before dispose to avoid re-entry
+        try {
+          xrHelper?.dispose();
+        } catch (dispErr: any) {
+          log('WARN', `AR: XR dispose errore: ${dispErr?.message || dispErr}`);
+        }
+
+        // Let native XR shutdown finish before tearing down the scene.
+        // 400 ms is conservative enough for BabylonNative arcana tasks.
+        await new Promise<void>(resolve => {
+          setTimeout(() => resolve(), 400);
+        });
+
+        lastTrackingRef.current = null;
+        if (trackingTimerRef.current) {
+          clearTimeout(trackingTimerRef.current);
+          trackingTimerRef.current = null;
+        }
       }
-    }
 
-    // Go directly to full cleanup (no exitXRAsync, no safety timer)
-    doFullCleanupAndNavigate();
+      // Proceed with full cleanup after XR is properly ended
+      doFullCleanupAndNavigate();
+    };
+
+    doExit().catch(err => {
+      log('ERROR', `goBackToGallery exit error: ${err?.message || err}`);
+      doFullCleanupAndNavigate();
+    });
   }, [xrSession, doFullCleanupAndNavigate]);
 
   // ========== ANDROID BACK BUTTON → GALLERY ==========
@@ -1386,13 +1770,56 @@ const App = () => {
 
   // ========== CREATE AT CENTER ==========
   const createAtCenter = useCallback(() => {
-    if (!sceneRef.current || !selectedModel) return;
-    const hitPos = lastHitPosRef.current;
-    if (hitPos && surfaceDetectedRef.current) {
-      placeModelAt(hitPos, sceneRef.current, selectedModel);
+    if (!sceneRef.current || !selectedModel || disposingRef.current || placingRef.current) return;
+
+    // 1) Primary: use last known hit position
+    let pos = lastHitPosRef.current;
+
+    // 2) Fallback: use the reticle's current world position if it's visible
+    if (!pos && hitTestMarkerRef.current && hitTestMarkerRef.current.isVisible) {
+      const rp = hitTestMarkerRef.current.position;
+      pos = new Vector3(rp.x, rp.y - 0.02, rp.z); // undo the visual Y offset
+    }
+
+    // 3) Last resort: project 2m in front of camera at ground level
+    if (!pos && sceneRef.current.activeCamera) {
+      const cam = sceneRef.current.activeCamera;
+      const fwd = cam.getDirection(Vector3.Forward());
+      const fwdFlat = new Vector3(fwd.x, 0, fwd.z).normalize();
+      pos = cam.globalPosition.add(fwdFlat.scale(2));
+      // Use tracked AR floor Y in AR mode, GROUND_Y in VR mode
+      if (vrActiveRef.current) {
+        pos.y = GROUND_Y;
+      } else if (Number.isFinite(arFloorYRef.current)) {
+        pos.y = arFloorYRef.current;
+      } else {
+        pos = null;
+      }
+    }
+
+    if (pos && sceneRef.current.activeCamera) {
+      const cam = sceneRef.current.activeCamera;
+      const dist = Vector3.Distance(cam.globalPosition, pos);
+      if (dist > 15) {
+        log('WARN', `Piazzamento ignorato: posizione troppo distante (${dist.toFixed(2)}m)`);
+        setStatus('Superficie troppo distante, riprova');
+        return;
+      }
+      if (!vrActiveRef.current && Number.isFinite(arFloorYRef.current)) {
+        const dy = Math.abs(pos.y - arFloorYRef.current);
+        if (dy > 1.5) {
+          log('WARN', `Piazzamento ignorato: Y instabile (dy=${dy.toFixed(2)})`);
+          setStatus('Superficie instabile, riprova');
+          return;
+        }
+      }
+    }
+
+    if (pos) {
+      placeModelAt(pos, sceneRef.current, selectedModel);
     } else {
-      log('WARN', 'Nessuna posizione reticle disponibile per il piazzamento');
-      setStatus('Punta la camera verso il pavimento per piazzare!');
+      log('WARN', 'Nessuna posizione disponibile per il piazzamento');
+      setStatus('Punta la camera verso una superficie per piazzare!');
     }
   }, [selectedModel, placeModelAt]);
 
@@ -1471,6 +1898,7 @@ const App = () => {
       goBackToGallery={goBackToGallery}
       createAtCenter={createAtCenter}
       removeSelectedInstance={removeSelectedInstance}
+      canPlaceOnSurface={canPlaceOnSurface}
       vrFrozen={vrFrozen}
       toggleVRFreeze={toggleVRFreeze}
     />

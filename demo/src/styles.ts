@@ -309,6 +309,12 @@ export const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.5)',
   },
+  createBtnDisabled: {
+    backgroundColor: 'rgba(100, 100, 100, 0.5)',
+    borderColor: 'rgba(150, 150, 150, 0.3)',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
 
   // ================= PANNELLO TEXTURE =================
   texturePanel: {
