@@ -44,7 +44,7 @@
 		<string>_http._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>Camera access is required to render augmented reality content.</string>
+	<string>L'app necessita della fotocamera e del LiDAR per scansionare la stanza.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>L'app usa la tua posizione per mostrare gli oggetti AR nel posto giusto.</string>
 	<key>NSMotionUsageDescription</key>

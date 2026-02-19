@@ -51,6 +51,7 @@ import {setupPlaneDetection, PlaneDetectionResult} from './src/scene/planeDetect
 import {configureARRendering, configureVRRendering, resetRendering} from './src/scene/occlusion';
 import {GalleryScreen} from './src/components/GalleryScreen';
 import {ViewerUI} from './src/components/ViewerUI';
+import {useRoomPlan, ExportType, ScanStatus} from 'expo-roomplan';
 
 // ================= APP =================
 const App = () => {
@@ -59,6 +60,15 @@ const App = () => {
   // Hooks
   const {deviceLatRef, deviceLonRef} = useGPS();
   const {compassHeading} = useCompass();
+
+  // RoomPlan hook (for AR mode — scans the room using Apple's LiDAR-based RoomPlan API)
+  const {startRoomPlan, roomScanStatus, jsonUrl, scanUrl} = useRoomPlan({
+    exportType: ExportType.Parametric,
+    sendFileLoc: true,
+  });
+
+  // Track RoomPlan scan status changes
+  const [roomPlanActive, setRoomPlanActive] = useState(false);
 
   // Navigation state
   const [currentScreen, setCurrentScreen] = useState<AppScreen>('gallery');
@@ -840,14 +850,22 @@ const App = () => {
   // ========== TOGGLE AR/VR ==========
   const toggleXR = useCallback(async () => {
     if (disposingRef.current) return; // Don't start XR during cleanup
-    if (!scene || !rootNode) {
+
+    // In AR mode we use RoomPlan (no BabylonJS scene needed).
+    // In VR mode we need the BabylonJS scene and rootNode to be ready.
+    if (viewerMode !== 'AR' && (!scene || !rootNode)) {
       log('WARN', 'Scena o rootNode non ancora pronto');
       return;
     }
 
     try {
+      // For VR exit/enter paths below, scene is guaranteed non-null by the guard above.
+      // We add this assertion to help TypeScript narrow the type.
+      // AR mode (RoomPlan) exits early and never reaches these code paths.
+
       // ===== EXITING =====
       if (xrSession || vrActiveRef.current) {
+        if (!scene) return; // TypeScript narrowing — unreachable in practice
         log('INFO', `Uscita dalla sessione ${viewerMode}...`);
         setStatus(`Chiusura ${viewerMode}...`);
 
@@ -969,6 +987,7 @@ const App = () => {
       setStatus(`Avvio ${mode} in corso...`);
 
       if (mode === 'VR') {
+        if (!scene || !rootNode) return; // TypeScript narrowing — VR requires scene
         // ===== VR MODE =====
         vrActiveRef.current = true;
 
@@ -1110,417 +1129,28 @@ const App = () => {
         return;
       }
 
-      // ===== AR MODE =====
-      // Reset AR floor tracking (unknown until we get a hit/plane)
-      arFloorYRef.current = Number.NaN;
-      lastHitPosRef.current = null;
-      canPlaceOnSurfaceRef.current = false;
-      setCanPlaceOnSurface(false);
-      if (hitTestMarkerRef.current) hitTestMarkerRef.current.isVisible = false;
-
-      const xr = await scene.createDefaultXRExperienceAsync({
-        disableDefaultUI: true,
-        disableTeleportation: true,
-        optionalFeatures: ['hit-test', 'plane-detection', 'mesh-detection', 'anchors'],
-      });
-      xrRef.current = xr;
-
-      const referenceSpaceOrder: Array<'unbounded' | 'local-floor' | 'local' | 'viewer'> = [
-        'unbounded',
-        'local-floor',
-        'local',
-        'viewer',
-      ];
-      let session: any = null;
-      let lastEnterErr: any = null;
-      for (const refSpace of referenceSpaceOrder) {
-        try {
-          session = await xr.baseExperience.enterXRAsync('immersive-ar', refSpace, xr.renderTarget);
-          log('INFO', `Sessione AR avviata con reference space: ${refSpace}`);
-          break;
-        } catch (enterErr: any) {
-          lastEnterErr = enterErr;
-          log('WARN', `AR: reference space ${refSpace} non disponibile: ${enterErr?.message || enterErr}`);
-        }
-      }
-      if (!session) {
-        throw lastEnterErr || new Error('Nessun reference space AR disponibile');
-      }
-      log('INFO', 'Sessione AR avviata');
-
-      // AR shadow ground
-      const sg = scene.getMeshByName('shadowGround');
-      if (sg) {
-        sg.receiveShadows = true;
-        sg.position.y = Number.isFinite(arFloorYRef.current) ? arFloorYRef.current : 0;
-        const mat = sg.material as StandardMaterial;
-        if (mat) {
-          mat.diffuseColor = new Color3(0.5, 0.5, 0.5);
-          mat.specularColor = new Color3(0, 0, 0);
-          mat.alpha = 0.35;
-          mat.disableDepthWrite = true;
-        }
-      }
-
-      if (modelRootRef.current) modelRootRef.current.setEnabled(false);
-
-      // AR grid
-      const grid = MeshBuilder.CreateGround('arGrid', {width: 20, height: 20, subdivisions: 40}, scene);
-      grid.position.y = Number.isFinite(arFloorYRef.current) ? arFloorYRef.current : 0;
-      const gridMat = new StandardMaterial('gridMat', scene);
-      gridMat.diffuseColor = new Color3(0, 0.6, 0.6);
-      gridMat.emissiveColor = new Color3(0, 0.15, 0.15);
-      gridMat.alpha = 0.15;
-      gridMat.wireframe = true;
-      gridMat.backFaceCulling = false;
-      gridMat.disableDepthWrite = true;
-      grid.material = gridMat;
-      grid.isPickable = false;
-      grid.renderingGroupId = 1;
-      groundPlaneRef.current = grid;
-
-      let hitTestTimestamp = 0;
-
-      // WebXR Hit Test
+      // ===== AR MODE → ROOMPLAN =====
+      // Instead of launching Babylon's WebXR AR, we launch Apple's native RoomPlan
+      // scanner via the expo-roomplan library. The native UIViewController will
+      // overlay on top of the app, perform the LiDAR scan, and return file paths.
       try {
-        const hitTestOptions = {offsetRay: new Vector3(0, 0, 0), entityTypes: ['plane', 'point', 'mesh']};
-        let hitTestFeature: WebXRHitTest | null = null;
-        try {
-          hitTestFeature = xr.baseExperience.featuresManager.enableFeature(
-            WebXRFeatureName.HIT_TEST,
-            'stable',
-            hitTestOptions,
-          ) as WebXRHitTest;
-        } catch (stableErr: any) {
-          log('INFO', `AR: HitTest stable non disponibile, fallback latest (${stableErr?.message || stableErr})`);
-          hitTestFeature = xr.baseExperience.featuresManager.enableFeature(
-            WebXRFeatureName.HIT_TEST,
-            'latest',
-            hitTestOptions,
-          ) as WebXRHitTest;
-        }
-
-        if (hitTestFeature) {
-          log('INFO', 'AR: WebXR HitTest abilitato');
-          xrHitTestObserverRef.current = hitTestFeature.onHitTestResultObservable.add((results) => {
-            if (disposingRef.current) return;
-            if (results.length > 0) {
-              const hit = results[0];
-              hitTestTimestamp = Date.now();
-              const cam = xr.baseExperience.camera;
-              if (cam) {
-                const camPos = cam.globalPosition.clone();
-                const dist = Vector3.Distance(camPos, hit.position);
-                if (dist > 15) return; // Ignore outlier hits far from camera
-              }
-              if (!surfaceDetectedRef.current) {
-                surfaceDetectedRef.current = true;
-                setSurfaceDetected(true);
-                log('INFO', 'AR: Superficie rilevata via HitTest');
-              }
-              // Set target position for smooth interpolation (applied in per-frame observer)
-              reticleTargetPosRef.current = new Vector3(hit.position.x, hit.position.y + 0.02, hit.position.z);
-              if (hitTestMarkerRef.current) {
-                hitTestMarkerRef.current.isVisible = true;
-              }
-              lastHitPosRef.current = hit.position.clone();
-              // Track the detected floor Y for AR fallback positioning
-              if (!Number.isFinite(arFloorYRef.current) || Math.abs(hit.position.y - arFloorYRef.current) < 1.5) {
-                arFloorYRef.current = hit.position.y;
-              }
-            }
-          });
-        }
-      } catch (htErr: any) {
-        log('WARN', `AR: WebXR HitTest non disponibile: ${htErr.message}`);
+        setStatus('Avvio scansione stanza con LiDAR...');
+        log('INFO', 'Avvio RoomPlan...');
+        setRoomPlanActive(true);
+        // This opens Apple's native RoomCaptureViewController in full-screen overlay
+        await startRoomPlan('LaMiaStanza');
+        log('INFO', 'RoomPlan: startRoomPlan chiamato con successo');
+        // The actual scan result (OK / Canceled / Error) arrives asynchronously via
+        // the roomScanStatus / jsonUrl / scanUrl state from the useRoomPlan hook.
+        // We monitor those via a dedicated useEffect below.
+      } catch (error: any) {
+        log('ERROR', `Errore RoomPlan: ${error?.message || error}`);
+        setStatus('Errore durante la scansione');
+        setRoomPlanActive(false);
+        Alert.alert('Errore RoomPlan', `Impossibile avviare la scansione:\n${error?.message || error}`);
       }
-
-      // Enable WebXR Anchor system for placed-object stabilization
-      try {
-        anchorSystemRef.current = xr.baseExperience.featuresManager.enableFeature(
-          WebXRFeatureName.ANCHOR_SYSTEM,
-          'stable',
-        );
-        if (!anchorSystemRef.current) throw new Error('null');
-        log('INFO', 'AR: Anchor system enabled');
-      } catch {
-        try {
-          anchorSystemRef.current = xr.baseExperience.featuresManager.enableFeature(
-            WebXRFeatureName.ANCHOR_SYSTEM,
-            'latest',
-          );
-          log('INFO', 'AR: Anchor system enabled (latest)');
-        } catch (ancErr: any) {
-          anchorSystemRef.current = null;
-          log('WARN', `AR: Anchor system unavailable: ${ancErr?.message || ancErr}`);
-        }
-      }
-
-      // Configure AR rendering groups (occlusion)
-      configureARRendering(scene);
-
-      // Plane detection
-      planeDetectionRef.current = setupPlaneDetection({xr, scene, enableOccluders: true});
-
-      // Camera raycast fallback
-      surfaceDetectedRef.current = true;
-      setSurfaceDetected(true);
-      log('INFO', 'AR: Raycast camera fallback attivo');
-
-      // Smoothing factor for per-frame reticle lerp (0 = no movement, 1 = instant snap).
-      // 0.18 keeps motion fluid without being too laggy.
-      const RETICLE_LERP = 0.18;
-      // Base reticle scale at 1 m distance.  At distance d, scale = d * BASE_SCALE.
-      const RETICLE_BASE_SCALE = 1.0;
-      // When no surface data is available at all, project the reticle this many metres in front.
-      const RETICLE_FALLBACK_DIST = 1.5;
-
-      xrFrameObserverRef.current = xr.baseExperience.sessionManager.onXRFrameObservable.add(() => {
-        if (disposingRef.current) return;
-        if (!hitTestMarkerRef.current || !xr.baseExperience.camera) return;
-        try {
-        const cam = xr.baseExperience.camera;
-        const camPos = cam.globalPosition.clone();
-        const camForward = cam.getDirection(Vector3.Forward());
-        const now = Date.now();
-        const hitTestRecentlyActive = (now - hitTestTimestamp) < 300;
-
-        // Feed camera height to plane detection for plausibility checks
-        if (planeDetectionRef.current) {
-          planeDetectionRef.current.setCameraY(camPos.y);
-        }
-
-        // ── Update anchor transforms for all placed objects ──
-        if (anchorSystemRef.current) {
-          placedAnchorsRef.current.forEach((anchor, node) => {
-            if (!anchor || node.isDisposed()) return;
-            try {
-              const anchorPos = anchor.position;
-              const anchorRot = anchor.rotationQuaternion;
-              if (anchorPos) {
-                node.position.copyFrom(anchorPos);
-              }
-              if (anchorRot && node.rotationQuaternion) {
-                node.rotationQuaternion.copyFrom(anchorRot);
-              }
-            } catch (anchorErr) {
-              // skip if anchor is stale
-            }
-          });
-        }
-
-        // ── Prefer fresh hit-test result (most accurate) ──
-        // (target already set in hitTest observer above when fresh)
-
-        if (!hitTestRecentlyActive) {
-          // ── Fallback 1: raycast against detected plane meshes ──
-          const ray = new Ray(camPos, camForward, 15);
-          let closestDist = Infinity;
-          let bestHitPos: Vector3 | null = null;
-
-          if (planeDetectionRef.current) {
-            planeDetectionRef.current.planes.forEach((plane) => {
-              if (!plane.visualMesh.isDisposed()) {
-                const pickInfo = ray.intersectsMesh(plane.visualMesh, false);
-                if (pickInfo.hit && pickInfo.pickedPoint && pickInfo.distance < closestDist) {
-                  closestDist = pickInfo.distance;
-                  bestHitPos = pickInfo.pickedPoint.clone();
-                }
-              }
-            });
-          }
-
-          if (bestHitPos) {
-            const hp = bestHitPos as Vector3;
-            reticleTargetPosRef.current = new Vector3(hp.x, hp.y + 0.02, hp.z);
-            hitTestMarkerRef.current.isVisible = true;
-            lastHitPosRef.current = hp;
-            arFloorYRef.current = hp.y;
-          } else {
-            // ── Fallback 2: project camera ray onto known floor plane ──
-            const floorY = arFloorYRef.current;
-            let projected = false;
-            if (Number.isFinite(floorY) && Math.abs(camForward.y) > 0.001) {
-              const t = (floorY - camPos.y) / camForward.y;
-              if (t > 0.2 && t < 15) {
-                const hitX = camPos.x + t * camForward.x;
-                const hitZ = camPos.z + t * camForward.z;
-                reticleTargetPosRef.current = new Vector3(hitX, floorY + 0.02, hitZ);
-                hitTestMarkerRef.current.isVisible = true;
-                lastHitPosRef.current = new Vector3(hitX, floorY, hitZ);
-                projected = true;
-              }
-            }
-
-            if (!projected) {
-              // ── Fallback 3 (ALWAYS MOVE): project at fixed distance in front of camera ──
-              // This ensures the reticle NEVER freezes even if no surface is known.
-              const forward2D = new Vector3(camForward.x, 0, camForward.z);
-              const forward2DLen = Math.sqrt(forward2D.x * forward2D.x + forward2D.z * forward2D.z);
-              if (forward2DLen > 0.001) {
-                forward2D.scaleInPlace(1 / forward2DLen);
-                const groundY = Number.isFinite(arFloorYRef.current) ? arFloorYRef.current : camPos.y - 1.2;
-                const projX = camPos.x + forward2D.x * RETICLE_FALLBACK_DIST;
-                const projZ = camPos.z + forward2D.z * RETICLE_FALLBACK_DIST;
-                reticleTargetPosRef.current = new Vector3(projX, groundY + 0.02, projZ);
-                hitTestMarkerRef.current.isVisible = true;
-                lastHitPosRef.current = new Vector3(projX, groundY, projZ);
-              }
-            }
-          }
-        }
-
-        // ── Smooth reticle position via lerp ──
-        if (reticleTargetPosRef.current && hitTestMarkerRef.current) {
-          const cur = hitTestMarkerRef.current.position;
-          const tgt = reticleTargetPosRef.current;
-          // If the reticle hasn't been positioned yet, snap immediately
-          if (cur.x === 0 && cur.y === 0 && cur.z === 0) {
-            cur.copyFrom(tgt);
-          } else {
-            // Use a lerp factor that ramps up when the target is far away,
-            // so large position changes (new hit-test result) converge quickly
-            // while small everyday movements remain smooth.
-            const dist2 = Vector3.DistanceSquared(cur, tgt);
-            const adaptiveLerp = dist2 > 0.5 ? 0.4 : RETICLE_LERP; // snap fast if far
-            cur.x += (tgt.x - cur.x) * adaptiveLerp;
-            cur.y += (tgt.y - cur.y) * adaptiveLerp;
-            cur.z += (tgt.z - cur.z) * adaptiveLerp;
-          }
-
-          // ── Distance-based reticle scaling ──
-          const camPos = cam.globalPosition;
-          const dist = Vector3.Distance(camPos, cur);
-          const s = Math.max(0.3, dist * RETICLE_BASE_SCALE);
-          hitTestMarkerRef.current.scaling.set(s, s, s);
-        }
-
-        // ── Placement validity — update reticle colour (green = valid, red = invalid) ──
-        {
-          let placementValid = false;
-          if (hitTestMarkerRef.current?.isVisible && lastHitPosRef.current) {
-            const camP = cam.globalPosition;
-            const placeDist = Vector3.Distance(camP, lastHitPosRef.current);
-            if (placeDist <= 15) {
-              if (Number.isFinite(arFloorYRef.current)) {
-                const dy = Math.abs(lastHitPosRef.current.y - arFloorYRef.current);
-                placementValid = dy <= 1.5;
-              } else {
-                placementValid = true;
-              }
-            }
-          }
-          if (hitTestMarkerRef.current) {
-            const rMat = hitTestMarkerRef.current.material as StandardMaterial;
-            if (rMat) {
-              if (placementValid) {
-                rMat.diffuseColor.r = 0; rMat.diffuseColor.g = 1; rMat.diffuseColor.b = 0;
-                rMat.emissiveColor.r = 0; rMat.emissiveColor.g = 1; rMat.emissiveColor.b = 0;
-              } else {
-                rMat.diffuseColor.r = 1; rMat.diffuseColor.g = 0; rMat.diffuseColor.b = 0;
-                rMat.emissiveColor.r = 1; rMat.emissiveColor.g = 0; rMat.emissiveColor.b = 0;
-              }
-            }
-          }
-          if (placementValid !== canPlaceOnSurfaceRef.current) {
-            canPlaceOnSurfaceRef.current = placementValid;
-            setCanPlaceOnSurface(placementValid);
-          }
-        }
-
-        // Sync floor Y from plane detection manager
-        if (planeDetectionRef.current) {
-          const planeFloorY = planeDetectionRef.current.getFloorY();
-          if (Number.isFinite(planeFloorY)) {
-            arFloorYRef.current = planeFloorY;
-          }
-        }
-
-        // Sync surface-detected state
-        if (planeDetectionRef.current && planeDetectionRef.current.isSurfaceDetected()) {
-          if (!surfaceDetectedRef.current) {
-            surfaceDetectedRef.current = true;
-            setSurfaceDetected(true);
-          }
-        }
-
-        // Keep AR grid synced with detected floor height
-        if (groundPlaneRef.current && groundPlaneRef.current.name === 'arGrid') {
-          const floorY = arFloorYRef.current;
-          if (Number.isFinite(floorY) && Math.abs(groundPlaneRef.current.position.y - floorY) > 0.01) {
-            groundPlaneRef.current.position.y = floorY;
-          }
-        }
-        const sg = scene.getMeshByName('shadowGround');
-        if (sg) {
-          const floorY = arFloorYRef.current;
-          if (Number.isFinite(floorY) && Math.abs(sg.position.y - floorY) > 0.01) {
-            sg.position.y = floorY;
-          }
-        }
-        } catch (frameErr) {
-          // Ignore errors during XR teardown
-        }
-      });
-
-      // Sun sphere for AR — align directional light to real sun but hide the visual sphere
-      try {
-        sunSphereRef.current = createSunSphere(scene, deviceLatRef.current, deviceLonRef.current, dirLightRef.current, true);
-        // Hide the visual sun meshes in AR — only light alignment matters
-        if (sunSphereRef.current) sunSphereRef.current.isVisible = false;
-        const sunGlowAR = scene.getMeshByName('sunGlow');
-        if (sunGlowAR) sunGlowAR.isVisible = false;
-        log('INFO', 'AR: Sole visivo nascosto (solo allineamento luce)');
-      } catch (sunErr: any) {
-        log('WARN', `Errore posizione sole: ${sunErr.message}`);
-      }
-
-      setXrSession(session);
-
-      session.onXRSessionEnded.add(() => {
-        anchorSystemRef.current = null;
-        placedAnchorsRef.current.clear();
-        log('INFO', 'Sessione XR terminata (evento)');
-        xrRef.current = null;
-        lastTrackingRef.current = null;
-        if (trackingTimerRef.current) {
-          clearTimeout(trackingTimerRef.current);
-          trackingTimerRef.current = null;
-        }
-        // If we were navigating back, cleanup is already handled by goBackToGallery
-        if (navigatingBackRef.current || disposingRef.current) {
-          log('INFO', 'AR session ended (during back navigation — cleanup already in progress)');
-        } else {
-          setXrSession(undefined);
-          setTrackingState(undefined);
-          setStatus('AR terminata.');
-        }
-      });
-
-      // Tracking state
-      const xrCam = xr.baseExperience.camera;
-      xrTrackingObserverRef.current = xrCam.onTrackingStateChanged.add((newState: WebXRTrackingState) => {
-        if (disposingRef.current) return;
-        if (newState === lastTrackingRef.current) return;
-        if (trackingTimerRef.current) clearTimeout(trackingTimerRef.current);
-        trackingTimerRef.current = setTimeout(() => {
-          if (newState !== lastTrackingRef.current) {
-            lastTrackingRef.current = newState;
-            setTrackingState(newState);
-          }
-        }, 500);
-      });
-
-      setTimeout(() => {
-        if (lastTrackingRef.current === null) {
-          lastTrackingRef.current = WebXRTrackingState.TRACKING;
-          setTrackingState(WebXRTrackingState.TRACKING);
-        }
-      }, 2000);
-
       xrStartingRef.current = false;
-      setStatus('AR ATTIVA! Usa i controlli per manipolare il modello.');
-      log('INFO', '=== AR COMPLETAMENTE OPERATIVA ===');
+      return; // RoomPlan launched — do not fall through to outer catch
     } catch (error: any) {
       xrStartingRef.current = false;
       log('ERROR', `Errore ${viewerMode}: ${error.message}\n${error.stack || ''}`);
@@ -1528,19 +1158,52 @@ const App = () => {
       setXrSession(undefined);
       Alert.alert(`Errore ${viewerMode}`, `Impossibile avviare la sessione ${viewerMode}:\n${error.message}`);
     }
-  }, [scene, rootNode, xrSession, viewerMode, compassHeading]);
+  }, [scene, rootNode, xrSession, viewerMode, compassHeading, startRoomPlan]);
 
   // Auto-start XR/VR
   useEffect(() => {
-    if (sceneReady && modelLoaded && !xrSession && !vrActiveRef.current && !xrStartingRef.current) {
+    if (viewerMode === 'AR' && !xrStartingRef.current && !roomPlanActive && currentScreen === 'viewer') {
+      // In AR mode, launch RoomPlan directly (no need to wait for BabylonJS scene)
       const t = setTimeout(() => {
-        if (!xrSession && !vrActiveRef.current && !xrStartingRef.current) {
-          toggleXR().catch((e) => log('ERROR', `Auto-start XR failed: ${e?.message || e}`));
+        if (!xrStartingRef.current && !roomPlanActive) {
+          toggleXR().catch((e) => log('ERROR', `Auto-start RoomPlan failed: ${e?.message || e}`));
         }
       }, 300);
       return () => clearTimeout(t);
     }
-  }, [sceneReady, modelLoaded, xrSession, toggleXR]);
+    if (viewerMode === 'VR' && sceneReady && modelLoaded && !xrSession && !vrActiveRef.current && !xrStartingRef.current) {
+      const t = setTimeout(() => {
+        if (!xrSession && !vrActiveRef.current && !xrStartingRef.current) {
+          toggleXR().catch((e) => log('ERROR', `Auto-start VR failed: ${e?.message || e}`));
+        }
+      }, 300);
+      return () => clearTimeout(t);
+    }
+  }, [sceneReady, modelLoaded, xrSession, toggleXR, viewerMode, roomPlanActive, currentScreen]);
+
+  // Monitor RoomPlan scan status changes
+  useEffect(() => {
+    if (!roomPlanActive) return;
+    if (roomScanStatus === ScanStatus.OK) {
+      log('INFO', `RoomPlan: Scansione completata!`);
+      if (jsonUrl) log('INFO', `RoomPlan: JSON file → ${jsonUrl}`);
+      if (scanUrl) log('INFO', `RoomPlan: USDZ file → ${scanUrl}`);
+      setStatus(`Scansione completata!${jsonUrl ? ` JSON: ${jsonUrl}` : ''}${scanUrl ? ` USDZ: ${scanUrl}` : ''}`);
+      setRoomPlanActive(false);
+      Alert.alert(
+        'Scansione completata',
+        `La stanza è stata scansionata con successo.\n${jsonUrl ? `JSON: ${jsonUrl}\n` : ''}${scanUrl ? `USDZ: ${scanUrl}` : ''}`,
+      );
+    } else if (roomScanStatus === ScanStatus.Canceled) {
+      log('INFO', 'RoomPlan: Scansione annullata dall\'utente');
+      setStatus('Scansione annullata.');
+      setRoomPlanActive(false);
+    } else if (roomScanStatus === ScanStatus.Error) {
+      log('ERROR', 'RoomPlan: Errore durante la scansione');
+      setStatus('Errore durante la scansione.');
+      setRoomPlanActive(false);
+    }
+  }, [roomScanStatus, roomPlanActive, jsonUrl, scanUrl]);
 
   // ========== CLEANUP & NAVIGATE TO GALLERY ==========
   const doFullCleanupAndNavigate = useCallback(() => {
