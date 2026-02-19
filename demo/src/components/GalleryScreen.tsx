@@ -1,12 +1,15 @@
-import React, {useEffect, useRef} from 'react';
-import {SafeAreaView, View, Text, FlatList, TouchableOpacity, Animated, Easing} from 'react-native';
-import {Eye, Smartphone, Box} from 'lucide-react-native';
+import React, {useEffect, useRef, useMemo} from 'react';
+import {SafeAreaView, View, Text, FlatList, TouchableOpacity, Animated, Easing, ActivityIndicator} from 'react-native';
+import {Eye, Smartphone, ScanLine} from 'lucide-react-native';
 import {AR_MODELS, ModelData} from '../../modelsData';
 import {ViewerMode} from '../types';
 import {styles} from '../styles';
 
 interface GalleryScreenProps {
   onOpenModel: (model: ModelData, mode: ViewerMode) => void;
+  onStartScan?: () => void;
+  scannedModels?: ModelData[];
+  scanInProgress?: boolean;
 }
 
 export const MarqueeText = ({text, style, containerStyle}: {text: string; style: any; containerStyle?: any}) => {
@@ -46,52 +49,83 @@ export const MarqueeText = ({text, style, containerStyle}: {text: string; style:
   );
 };
 
-export const GalleryScreen: React.FC<GalleryScreenProps> = ({onOpenModel}) => {
+export const GalleryScreen: React.FC<GalleryScreenProps> = ({onOpenModel, onStartScan, scannedModels = [], scanInProgress = false}) => {
+  // Merge built-in models with scanned models
+  const allModels = useMemo(() => [...AR_MODELS, ...scannedModels], [scannedModels]);
+
   return (
     <SafeAreaView style={styles.galleryContainer}>
       <View style={styles.galleryHeader}>
-        <Text style={styles.galleryTitle}>Modelli 3D</Text>
-        <Text style={styles.gallerySubtitle}>Scegli un modello per iniziare</Text>
+        <View style={styles.galleryHeaderRow}>
+          <View style={styles.galleryHeaderText}>
+            <Text style={styles.galleryTitle}>Modelli 3D</Text>
+            <Text style={styles.gallerySubtitle}>Scegli un modello per iniziare</Text>
+          </View>
+          {onStartScan && (
+            <TouchableOpacity
+              style={[styles.scanButton, scanInProgress && styles.scanButtonDisabled]}
+              onPress={onStartScan}
+              disabled={scanInProgress}
+              activeOpacity={0.7}
+            >
+              {scanInProgress ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <ScanLine color="#fff" size={20} />
+              )}
+              <Text style={styles.scanButtonText}>
+                {scanInProgress ? 'SCANNING...' : 'SCAN'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <FlatList
-        data={AR_MODELS}
+        data={allModels}
         numColumns={2}
         contentContainerStyle={styles.galleryList}
         columnWrapperStyle={styles.galleryRow}
         keyExtractor={item => item.id}
-        renderItem={({item}) => (
-          <View style={styles.modelCard}>
-            <View>
-              <View style={styles.modelThumbnail}>
-                 <Text style={styles.modelEmoji}>{item.thumbnail}</Text>
+        renderItem={({item}) => {
+          const isScanned = scannedModels.some(m => m.id === item.id);
+          return (
+            <View style={[styles.modelCard, isScanned && styles.scannedModelCard]}>
+              <View>
+                <View style={[styles.modelThumbnail, isScanned && styles.scannedModelThumbnail]}>
+                  <Text style={styles.modelEmoji}>{item.thumbnail}</Text>
+                  {isScanned && (
+                    <View style={styles.scannedBadge}>
+                      <Text style={styles.scannedBadgeText}>SCAN</Text>
+                    </View>
+                  )}
+                </View>
+                
+                <View style={styles.cardTextContainer}>
+                  {item.name.length > 15 ? (
+                    <MarqueeText text={item.name} style={styles.modelName} />
+                  ) : (
+                    <Text style={styles.modelName}>{item.name}</Text>
+                  )}
+                  <Text style={styles.modelDesc} numberOfLines={3} ellipsizeMode="tail">
+                    {item.description}
+                  </Text>
+                </View>
               </View>
-              
-              <View style={styles.cardTextContainer}>
-                {item.name.length > 15 ? (
-                   <MarqueeText text={item.name} style={styles.modelName} />
-                ) : (
-                   <Text style={styles.modelName}>{item.name}</Text>
-                )}
-                <Text style={styles.modelDesc} numberOfLines={3} ellipsizeMode="tail">
-                  {item.description}
-                </Text>
-              </View>
-            </View>
 
-            {/* MODIFICATO: Testo a sinistra, Icona a destra */}
-            <View style={styles.modelActions}>
-              <TouchableOpacity style={styles.arActionBtn} onPress={() => onOpenModel(item, 'AR')}>
-                <Text style={styles.actionBtnText}>AR</Text>
-                <Smartphone color="#22c55e" size={16} />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.vrActionBtn} onPress={() => onOpenModel(item, 'VR')}>
-                <Text style={styles.actionBtnText}>VR</Text>
-                <Eye color="#3b82f6" size={16} />
-              </TouchableOpacity>
+              <View style={styles.modelActions}>
+                <TouchableOpacity style={styles.arActionBtn} onPress={() => onOpenModel(item, 'AR')}>
+                  <Text style={styles.actionBtnText}>AR</Text>
+                  <Smartphone color="#22c55e" size={16} />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.vrActionBtn} onPress={() => onOpenModel(item, 'VR')}>
+                  <Text style={styles.actionBtnText}>VR</Text>
+                  <Eye color="#3b82f6" size={16} />
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
-        )}
+          );
+        }}
       />
     </SafeAreaView>
   );
