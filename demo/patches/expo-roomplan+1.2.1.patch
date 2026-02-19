@@ -1,0 +1,102 @@
+diff --git a/node_modules/expo-roomplan/ios/RoomPlanCaptureUIView.swift b/node_modules/expo-roomplan/ios/RoomPlanCaptureUIView.swift
+index 0e15341..ce979f7 100644
+--- a/node_modules/expo-roomplan/ios/RoomPlanCaptureUIView.swift
++++ b/node_modules/expo-roomplan/ios/RoomPlanCaptureUIView.swift
+@@ -161,7 +161,7 @@ class RoomPlanCaptureUIView: ExpoView, RoomCaptureSessionDelegate, RoomCaptureVi
+   }
+ 
+   func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: Error?) -> Bool {
+-    return true
++    return false
+   }
+   
+   func captureView(didPresent processedResult: CapturedRoom, error: Error?) {
+@@ -173,32 +173,50 @@ class RoomPlanCaptureUIView: ExpoView, RoomCaptureSessionDelegate, RoomCaptureVi
+   }
+ 
+   // MARK: - Export
++  private func makeSafeExportURLs(scanName: String) throws -> (folder: URL, usdz: URL, json: URL) {
++    guard let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
++      throw NSError(domain: "ExpoRoomplan", code: -1001, userInfo: [NSLocalizedDescriptionKey: "Unable to resolve app Documents directory."])
++    }
++
++    let roomsDirectory = documentsDirectory.appendingPathComponent("Rooms", isDirectory: true)
++    try FileManager.default.createDirectory(at: roomsDirectory, withIntermediateDirectories: true)
++
++    let safeName = scanName.replacingOccurrences(of: "/", with: "_")
++      .replacingOccurrences(of: "\\", with: "_")
++    let timestamp = Int(Date().timeIntervalSince1970)
++    let baseName = "\(safeName)_\(timestamp)"
++
++    let usdzURL = roomsDirectory.appendingPathComponent("\(baseName).usdz")
++    let jsonURL = roomsDirectory.appendingPathComponent("\(baseName).json")
++    return (roomsDirectory, usdzURL, jsonURL)
++  }
++
+   private func exportResults() {
+-    let exportedScanName = scanName ?? "Room"
++    guard !capturedRooms.isEmpty else {
++      sendError("Export failed: no captured room data available.")
++      return
++    }
+ 
+-    let destinationFolderURL = FileManager.default.temporaryDirectory.appending(path: "Export")
+-    let destinationURL = destinationFolderURL.appending(path: "\(exportedScanName).usdz")
+-    let capturedRoomURL = destinationFolderURL.appending(path: "\(exportedScanName).json")
++    let exportedScanName = scanName ?? "Room"
+ 
+     Task {
+       do {
++        let urls = try makeSafeExportURLs(scanName: exportedScanName)
+         let structure = try await structureBuilder.capturedStructure(from: capturedRooms)
+ 
+-        try FileManager.default.createDirectory(at: destinationFolderURL, withIntermediateDirectories: true)
+-
+         var finalExportType = CapturedRoom.USDExportOptions.parametric
+         if exportType == "MESH" { finalExportType = .mesh }
+         if exportType == "MODEL" { finalExportType = .model }
+ 
+         let jsonEncoder = JSONEncoder()
+         let jsonData = try jsonEncoder.encode(structure)
+-        try jsonData.write(to: capturedRoomURL)
+-        try structure.export(to: destinationURL, exportOptions: finalExportType)
++        try jsonData.write(to: urls.json)
++        try structure.export(to: urls.usdz, exportOptions: finalExportType)
+ 
+         if sendFileLoc {
+           self.onExported([
+-            "scanUrl": destinationURL.absoluteString,
+-            "jsonUrl": capturedRoomURL.absoluteString
++            "scanUrl": urls.usdz.absoluteString,
++            "jsonUrl": urls.json.absoluteString
+           ])
+         }
+   // Also emit a final OK status after export
+diff --git a/node_modules/expo-roomplan/ios/RoomPlanCaptureViewController.swift b/node_modules/expo-roomplan/ios/RoomPlanCaptureViewController.swift
+index 2687c69..96f6070 100644
+--- a/node_modules/expo-roomplan/ios/RoomPlanCaptureViewController.swift
++++ b/node_modules/expo-roomplan/ios/RoomPlanCaptureViewController.swift
+@@ -267,10 +267,21 @@ class RoomPlanCaptureViewController: UIViewController, RoomCaptureViewDelegate,
+     func exportResults() {
+         let exportedScanName = scanName ?? "Room"
+ 
+-        let destinationFolderURL = FileManager.default.temporaryDirectory
+-            .appending(path: "Export")
+-        let destinationURL = destinationFolderURL.appending(path: "\(exportedScanName).usdz")
+-        let capturedRoomURL = destinationFolderURL.appending(path: "\(exportedScanName).json")
++        // Use the app's sandbox Documents directory instead of temporaryDirectory
++        // to avoid iOS sandbox denial (file-write-create /private/var/mobile/Documents/Rooms)
++        
++        //let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
++        //let documentsDirectory = paths[0]
++        //let destinationFolderURL = documentsDirectory.appendingPathComponent("Rooms")
++
++        let paths = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
++        let cachesDirectory = paths[0]
++        let destinationFolderURL = cachesDirectory.appendingPathComponent("Rooms")
++
++        let destinationURL = destinationFolderURL.appendingPathComponent("\(exportedScanName).usdz")
++        let capturedRoomURL = destinationFolderURL.appendingPathComponent("\(exportedScanName).json")
+ 
+         // UI responsiveness, disable cancel button
+         cancelButton.removeTarget(
