@@ -52,6 +52,7 @@ import {configureARRendering, configureVRRendering, resetRendering} from './src/
 import {GalleryScreen} from './src/components/GalleryScreen';
 import {ViewerUI} from './src/components/ViewerUI';
 import {useRoomPlan, ExportType, ScanStatus} from 'expo-roomplan';
+import {SERVER_URL, UPLOAD_TIMEOUT_MS} from './src/config';
 
 // ================= APP =================
 const App = () => {
@@ -1800,7 +1801,70 @@ const App = () => {
     }
   }, [roomPlanActive, startRoomPlan]);
 
-  // Monitor RoomPlan scan status — when completed, add scanned model to gallery
+  // Upload scanned files to the RoomPlan server
+  const uploadScanToServer = useCallback(async (
+    scanName: string,
+    usdzPath: string | null,
+    jsonPath: string | null,
+  ): Promise<boolean> => {
+    try {
+      const formData = new FormData();
+      formData.append('name', scanName);
+      formData.append('deviceInfo', 'iOS - LiDAR');
+
+      if (usdzPath) {
+        const usdzUri = usdzPath.startsWith('file://') ? usdzPath : `file://${usdzPath}`;
+        formData.append('usdz', {
+          uri: usdzUri,
+          type: 'model/vnd.usdz+zip',
+          name: `${scanName.replace(/\s+/g, '_')}.usdz`,
+        } as any);
+      }
+
+      if (jsonPath) {
+        const jsonUri = jsonPath.startsWith('file://') ? jsonPath : `file://${jsonPath}`;
+        formData.append('json', {
+          uri: jsonUri,
+          type: 'application/json',
+          name: `${scanName.replace(/\s+/g, '_')}.json`,
+        } as any);
+      }
+
+      log('INFO', `Upload: Invio a ${SERVER_URL}/api/upload ...`);
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+
+      const response = await fetch(`${SERVER_URL}/api/upload`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || `HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      log('INFO', `Upload: Completato! ID server: ${result.scan?.id}`);
+      return true;
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        log('ERROR', 'Upload: Timeout — il server non ha risposto in tempo');
+      } else {
+        log('ERROR', `Upload: Errore — ${error?.message || error}`);
+      }
+      return false;
+    }
+  }, []);
+
+  // Monitor RoomPlan scan status — when completed, upload to server
   useEffect(() => {
     if (!roomPlanActive) return;
     if (roomScanStatus === ScanStatus.OK) {
@@ -1808,26 +1872,39 @@ const App = () => {
       if (jsonUrl) log('INFO', `RoomPlan: JSON → ${jsonUrl}`);
       if (scanUrl) log('INFO', `RoomPlan: USDZ → ${scanUrl}`);
 
-      // Create a new ModelData from the scan result
-      if (scanUrl) {
-        const scanId = `scan_${Date.now()}`;
+      if (scanUrl || jsonUrl) {
         const scanName = `Stanza ${scanCounterRef.current}`;
+
+        // Upload to server
+        uploadScanToServer(scanName, scanUrl || null, jsonUrl || null)
+          .then(success => {
+            if (success) {
+              Alert.alert(
+                'Scansione inviata ✅',
+                `"${scanName}" è stata caricata sul server.\nVisualizzala su: ${SERVER_URL}`,
+              );
+            } else {
+              Alert.alert(
+                'Errore upload ⚠️',
+                `La scansione "${scanName}" è stata completata ma non è stato possibile inviarla al server.\nVerifica che il server sia raggiungibile su: ${SERVER_URL}`,
+              );
+            }
+          });
+
+        // Also add to local gallery
+        const scanId = `scan_${Date.now()}`;
         const newModel: ModelData = {
           id: scanId,
           name: scanName,
-          fileName: scanUrl,   // USDZ file path from RoomPlan
+          fileName: scanUrl || '',
           thumbnail: '🏠',
-          description: `Scansione LiDAR${jsonUrl ? ' (+ JSON)' : ''}`,
+          description: `Scansione LiDAR — inviata al server`,
           scale: 1.0,
         };
         setScannedModels(prev => [...prev, newModel]);
-        log('INFO', `RoomPlan: Modello "${scanName}" aggiunto alla galleria`);
-        Alert.alert(
-          'Scansione completata ✅',
-          `"${scanName}" è stata aggiunta ai modelli disponibili.\nPuoi aprirla in modalità AR o VR.`,
-        );
+        log('INFO', `RoomPlan: Modello "${scanName}" aggiunto alla galleria locale`);
       } else {
-        Alert.alert('Scansione completata', 'La scansione è completata ma nessun file USDZ è stato generato.');
+        Alert.alert('Scansione completata', 'La scansione è completata ma nessun file è stato generato.');
       }
       setRoomPlanActive(false);
     } else if (roomScanStatus === ScanStatus.Canceled) {
@@ -1838,7 +1915,7 @@ const App = () => {
       setRoomPlanActive(false);
       Alert.alert('Errore', 'Si è verificato un errore durante la scansione della stanza.');
     }
-  }, [roomScanStatus, roomPlanActive, jsonUrl, scanUrl]);
+  }, [roomScanStatus, roomPlanActive, jsonUrl, scanUrl, uploadScanToServer]);
 
   // ========== CREATE AT CENTER ==========
   const createAtCenter = useCallback(() => {

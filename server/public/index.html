@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RoomPlan — Scansioni 3D</title>
+  <!-- Google's model-viewer for 3D rendering in browser -->
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
+  <style>
+    :root {
+      --bg: #09090b;
+      --card: #18181b;
+      --border: #27272a;
+      --purple: #a855f7;
+      --purple-dim: rgba(168, 85, 247, 0.15);
+      --green: #22c55e;
+      --blue: #3b82f6;
+      --red: #ef4444;
+      --white: #ffffff;
+      --gray: #a1a1aa;
+      --dark-gray: #3f3f46;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--white);
+      min-height: 100vh;
+    }
+
+    /* ===== HEADER ===== */
+    .header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header h1 {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+    .header h1 span { color: var(--purple); }
+    .header-stats {
+      display: flex;
+      gap: 20px;
+      color: var(--gray);
+      font-size: 14px;
+    }
+    .header-stats strong { color: var(--white); }
+
+    /* ===== MAIN CONTENT ===== */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 80px 20px;
+      color: var(--gray);
+    }
+    .empty-state .icon { font-size: 64px; margin-bottom: 16px; }
+    .empty-state h2 { color: var(--white); margin-bottom: 8px; }
+
+    /* ===== SCAN GRID ===== */
+    .scans-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 20px;
+    }
+
+    .scan-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .scan-card:hover {
+      border-color: var(--purple);
+      transform: translateY(-2px);
+    }
+
+    /* 3D Preview */
+    .scan-preview {
+      width: 100%;
+      height: 240px;
+      background: #000;
+      position: relative;
+      cursor: pointer;
+    }
+    .scan-preview model-viewer {
+      width: 100%;
+      height: 100%;
+    }
+    .no-preview {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--gray);
+      font-size: 48px;
+    }
+
+    .scan-info {
+      padding: 16px;
+    }
+    .scan-name {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .scan-meta {
+      font-size: 13px;
+      color: var(--gray);
+      margin-bottom: 12px;
+    }
+    .scan-meta span { margin-right: 16px; }
+
+    .scan-badges {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-usdz {
+      background: var(--purple-dim);
+      color: var(--purple);
+      border: 1px solid rgba(168, 85, 247, 0.3);
+    }
+    .badge-json {
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--blue);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    /* Action buttons */
+    .scan-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      border: 1px solid;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.8; }
+    .btn-view {
+      background: var(--purple-dim);
+      color: var(--purple);
+      border-color: rgba(168, 85, 247, 0.3);
+    }
+    .btn-download {
+      background: rgba(34, 197, 94, 0.15);
+      color: var(--green);
+      border-color: rgba(34, 197, 94, 0.3);
+    }
+    .btn-json {
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--blue);
+      border-color: rgba(59, 130, 246, 0.3);
+    }
+    .btn-delete {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--red);
+      border-color: rgba(239, 68, 68, 0.3);
+      margin-left: auto;
+    }
+
+    /* ===== FULLSCREEN VIEWER MODAL ===== */
+    .viewer-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.9);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+    }
+    .viewer-overlay.active { display: flex; }
+    .viewer-overlay .close-btn {
+      position: absolute;
+      top: 20px;
+      right: 24px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--white);
+      font-size: 18px;
+      padding: 10px 16px;
+      border-radius: 12px;
+      cursor: pointer;
+      z-index: 1001;
+    }
+    .viewer-overlay .close-btn:hover { border-color: var(--red); color: var(--red); }
+    .viewer-overlay model-viewer {
+      width: 90vw;
+      height: 80vh;
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .viewer-title {
+      color: var(--white);
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    /* ===== REFRESH BTN ===== */
+    .refresh-btn {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--white);
+      padding: 8px 16px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: border-color 0.2s;
+    }
+    .refresh-btn:hover { border-color: var(--purple); }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--card);
+      border: 1px solid var(--green);
+      color: var(--white);
+      padding: 14px 20px;
+      border-radius: 12px;
+      font-size: 14px;
+      z-index: 2000;
+      opacity: 0;
+      transform: translateY(20px);
+      transition: all 0.3s ease;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .toast.error { border-color: var(--red); }
+
+    @media (max-width: 600px) {
+      .header { padding: 16px; flex-direction: column; gap: 12px; }
+      .scans-grid { grid-template-columns: 1fr; }
+      .container { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="header">
+    <h1>🏠 <span>RoomPlan</span> Server</h1>
+    <div class="header-stats">
+      <span>Scansioni: <strong id="totalCount">–</strong></span>
+      <button class="refresh-btn" onclick="loadScans()">⟳ Aggiorna</button>
+    </div>
+  </header>
+
+  <!-- MAIN -->
+  <main class="container">
+    <div id="scansContainer"></div>
+  </main>
+
+  <!-- FULLSCREEN VIEWER MODAL -->
+  <div class="viewer-overlay" id="viewerOverlay">
+    <button class="close-btn" onclick="closeViewer()">✕ Chiudi</button>
+    <div class="viewer-title" id="viewerTitle"></div>
+    <model-viewer
+      id="fullViewer"
+      camera-controls
+      auto-rotate
+      shadow-intensity="1"
+      environment-image="neutral"
+      ar
+      ar-modes="webxr scene-viewer quick-look"
+      style="background: #111;"
+    ></model-viewer>
+  </div>
+
+  <!-- TOAST -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const API = window.location.origin;
+
+    // ========== LOAD SCANS ==========
+    async function loadScans() {
+      try {
+        const res = await fetch(`${API}/api/scans`);
+        const data = await res.json();
+        renderScans(data.scans);
+        document.getElementById('totalCount').textContent = data.scans.length;
+      } catch (err) {
+        showToast('Errore di connessione al server', true);
+        console.error(err);
+      }
+    }
+
+    // ========== RENDER ==========
+    function renderScans(scans) {
+      const container = document.getElementById('scansContainer');
+
+      if (!scans.length) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">📡</div>
+            <h2>Nessuna scansione</h2>
+            <p>Esegui una scansione LiDAR dall'app per vedere i modelli qui</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = `<div class="scans-grid">${scans.map(scan => renderCard(scan)).join('')}</div>`;
+    }
+
+    function renderCard(scan) {
+      const date = new Date(scan.created_at).toLocaleString('it-IT');
+      const usdzSize = scan.usdz_size ? formatSize(scan.usdz_size) : '–';
+      const jsonSize = scan.json_size ? formatSize(scan.json_size) : null;
+
+      const previewHtml = scan.usdz_filename
+        ? `<model-viewer
+            src="${API}/uploads/${scan.usdz_filename}"
+            camera-controls
+            auto-rotate
+            shadow-intensity="0.5"
+            environment-image="neutral"
+            style="width:100%;height:100%;background:#000;"
+          ></model-viewer>`
+        : `<div class="no-preview">🏠</div>`;
+
+      return `
+        <div class="scan-card">
+          <div class="scan-preview" onclick="openViewer('${scan.usdz_filename || ''}', '${escapeHtml(scan.name)}')">${previewHtml}</div>
+          <div class="scan-info">
+            <div class="scan-name">${escapeHtml(scan.name)}</div>
+            <div class="scan-meta">
+              <span>📅 ${date}</span>
+              <span>📦 ${usdzSize}</span>
+            </div>
+            <div class="scan-badges">
+              ${scan.usdz_filename ? '<span class="badge badge-usdz">USDZ</span>' : ''}
+              ${scan.json_filename ? '<span class="badge badge-json">JSON</span>' : ''}
+            </div>
+            <div class="scan-actions">
+              ${scan.usdz_filename ? `
+                <a class="btn btn-view" onclick="openViewer('${scan.usdz_filename}', '${escapeHtml(scan.name)}')">👁️ Visualizza 3D</a>
+                <a class="btn btn-download" href="${API}/api/scans/${scan.id}/download/usdz" download>⬇ USDZ</a>
+              ` : ''}
+              ${scan.json_filename ? `
+                <a class="btn btn-json" href="${API}/api/scans/${scan.id}/download/json" download>⬇ JSON</a>
+              ` : ''}
+              <button class="btn btn-delete" onclick="deleteScan('${scan.id}', '${escapeHtml(scan.name)}')">🗑️</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ========== VIEWER ==========
+    function openViewer(filename, name) {
+      if (!filename) return;
+      const overlay = document.getElementById('viewerOverlay');
+      const viewer = document.getElementById('fullViewer');
+      const title = document.getElementById('viewerTitle');
+      title.textContent = name;
+      viewer.setAttribute('src', `${API}/uploads/${filename}`);
+      overlay.classList.add('active');
+    }
+
+    function closeViewer() {
+      const overlay = document.getElementById('viewerOverlay');
+      const viewer = document.getElementById('fullViewer');
+      overlay.classList.remove('active');
+      viewer.removeAttribute('src');
+    }
+
+    // ========== DELETE ==========
+    async function deleteScan(id, name) {
+      if (!confirm(`Eliminare la scansione "${name}"?`)) return;
+      try {
+        const res = await fetch(`${API}/api/scans/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+          showToast(`"${name}" eliminata`);
+          loadScans();
+        } else {
+          showToast('Errore durante l\'eliminazione', true);
+        }
+      } catch (err) {
+        showToast('Errore di connessione', true);
+      }
+    }
+
+    // ========== UTILS ==========
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]));
+    }
+
+    function showToast(msg, isError = false) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.className = `toast show${isError ? ' error' : ''}`;
+      setTimeout(() => toast.className = 'toast', 3000);
+    }
+
+    // Close viewer on Escape
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeViewer();
+    });
+
+    // Initial load
+    loadScans();
+  </script>
+</body>
+</html>

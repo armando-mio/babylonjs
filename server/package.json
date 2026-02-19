@@ -1,0 +1,17 @@
+{
+  "name": "roomplan-server",
+  "version": "1.0.0",
+  "description": "Server per ricevere e visualizzare modelli 3D scansionati con RoomPlan",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^10.0.0"
+  }
+}
