@@ -57,4 +57,15 @@ HOW TO REBUILD IN XCODE (for iOS):
     rm -rf ~/Library/Developer/Xcode/DerivedData/*
     ```
 
+HOW TO CONNECT TO THE SERVER?
+- Start a new terminal and execute 
+    ```bash 
+    npx ngrok http 3001
+    ```
+- Copy the URL (e.g. https://a1b2-c3d4.ngrok-free.app).
+- Paste the URL in demo/src/constants.ts in this line: export const ROOM_SCAN_SERVER_URL = '...'.
+    ```typescript
+    export const ROOM_SCAN_SERVER_URL = 'https://a1b2-c3d4.ngrok-free.app';
+    ```
+
 For detailed prerequisites and troubleshooting, please refer to the [Demo README](demo/README.md).
