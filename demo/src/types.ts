@@ -1,6 +1,6 @@
 import {AbstractMesh, TransformNode} from '@babylonjs/core';
 
-export type AppScreen = 'gallery' | 'viewer';
+export type AppScreen = 'gallery' | 'viewer' | 'roomscan';
 export type ViewerMode = 'AR' | 'VR';
 
 export interface MeshListEntry {
