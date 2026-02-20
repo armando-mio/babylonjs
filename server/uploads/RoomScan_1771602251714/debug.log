@@ -1,0 +1,40 @@
+=========================================
+   DEBUG LOG - CONVERSIONE ROOMPLAN      
+=========================================
+
+[STEP 1] Analisi struttura USDZ (usdcat)
+Esecuzione: usdcat "/Users/et-mac-1/Desktop/babylonjs/server/uploads/RoomScan_1771602251714/RoomScan_1771602251714.usdz" -o "/Users/et-mac-1/Desktop/babylonjs/server/uploads/RoomScan_1771602251714/debug_scene.usda"
+SUCCESS: File USDA di debug generato con successo.
+
+[STEP 2] Conversione geometria in GLB (usd2gltf)
+Esecuzione: usd2gltf -i "/Users/et-mac-1/Desktop/babylonjs/server/uploads/RoomScan_1771602251714/RoomScan_1771602251714.usdz" -o "/Users/et-mac-1/Desktop/babylonjs/server/uploads/RoomScan_1771602251714/RoomScan_1771602251714_temp.glb" -f
+--- STDOUT (Output normale) ---
+Converting: /Users/et-mac-1/Desktop/babylonjs/server/uploads/RoomScan_1771602251714/RoomScan_1771602251714.usdz
+To: /Users/et-mac-1/Desktop/babylonjs/server/uploads/RoomScan_1771602251714/RoomScan_1771602251714_temp.glb
+Converted!
+
+--- STDERR (Avvisi/Errori) ---
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Arch_grp/Wall_0_grp/Window1) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Arch_grp/Wall_0_grp/Window1) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Arch_grp/Wall_0_grp/Window0) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Arch_grp/Wall_0_grp/Window0) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Arch_grp/Wall_0_grp/Wall0) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Arch_grp/Wall_0_grp/Wall0) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Floor_grp/Floor0) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Floor_grp/Floor0) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Object_grp/Chair_grp/Chair1) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Object_grp/Chair_grp/Chair1) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Object_grp/Chair_grp/Chair0) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Object_grp/Chair_grp/Chair0) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Object_grp/Storage_grp/Storage0) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Object_grp/Storage_grp/Storage0) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Object_grp/Table_grp/Table0) but MaterialBindingAPI is not applied on the prim
+Warning: in BindingsAtPrim at line 671 of /Users/runner/work/OpenUSD/OpenUSD/pxr/usd/usdShade/materialBindingAPI.cpp -- Found material bindings on prim at path (/RoomScan_1771602251714/Mesh_grp/Object_grp/Table_grp/Table0) but MaterialBindingAPI is not applied on the prim
+
+SUCCESS: Conversione base completata.
+
+[STEP 3] Iniezione Metadati JSON
+SUCCESS: JSON iniettato in 'extras'.
+
+[STEP 4] Salvataggio completato.
+File finale: /Users/et-mac-1/Desktop/babylonjs/server/uploads/RoomScan_1771602251714/RoomScan_1771602251714.glb

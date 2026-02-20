@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RoomPlan Scanner - GLB + Debug</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #09090b; color: #fafafa; min-height: 100vh; padding: 32px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { margin-bottom: 32px; }
+    .header h1 { font-size: 28px; font-weight: 800; margin-bottom: 4px; }
+    .header p { color: #a1a1aa; font-size: 14px; }
+    .table-container { background: #18181b; border: 1px solid #27272a; border-radius: 12px; overflow: hidden; }
+    .table-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid #27272a; }
+    .refresh-btn { background: #3b82f6; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 12px 24px; color: #a1a1aa; font-size: 12px; text-transform: uppercase; border-bottom: 1px solid #27272a; background: rgba(0,0,0,0.2); }
+    td { padding: 16px 24px; border-bottom: 1px solid rgba(39, 39, 42, 0.5); font-size: 14px; }
+    tr:hover td { background: rgba(255, 255, 255, 0.02); }
+    .file-badge { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; margin-right: 6px; margin-bottom: 4px; }
+    .badge-usdz { background: rgba(168, 85, 247, 0.15); color: #a855f7; border: 1px solid rgba(168, 85, 247, 0.3); }
+    .badge-json { background: rgba(34, 197, 94, 0.15); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.3); }
+    .badge-glb { background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3); }
+    .badge-log { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+    .badge-usda { background: rgba(234, 179, 8, 0.15); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.3); }
+    .btn { padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; text-decoration: none; border: 1px solid transparent; margin-right: 6px; margin-bottom: 4px; display: inline-block; }
+    .btn-download { background: rgba(255, 255, 255, 0.1); color: #fff; border-color: rgba(255, 255, 255, 0.2); }
+    .btn-view { background: rgba(34, 197, 94, 0.15); color: #22c55e; border-color: rgba(34, 197, 94, 0.3); }
+    .btn-delete { background: rgba(239, 68, 68, 0.1); color: #ef4444; border-color: rgba(239, 68, 68, 0.3); float: right; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📐 RoomPlan Scanner & Debugger</h1>
+      <p>Pipeline USDZ ➔ GLB (con generazione file log e USDA testuali)</p>
+    </div>
+    <div class="table-container">
+      <div class="table-header">
+        <h2>Archivio Scansioni</h2>
+        <button class="refresh-btn" onclick="loadScans()">↻ Aggiorna</button>
+      </div>
+      <div id="tableContent"><div style="padding: 40px; text-align: center; color: #a1a1aa;">Caricamento...</div></div>
+    </div>
+  </div>
+
+  <script>
+    async function loadScans() {
+      try {
+        const res = await fetch('/api/scans');
+        const data = await res.json();
+        const scans = data.scans || [];
+
+        if (scans.length === 0) {
+          document.getElementById('tableContent').innerHTML = '<div style="padding: 60px; text-align: center; color: #71717a;">Nessuna scansione presente.</div>';
+          return;
+        }
+
+        let html = '<table><thead><tr><th>Scansione</th><th>File e Log</th><th>Azioni</th></tr></thead><tbody>';
+
+        for (const scan of scans) {
+          const fileBadges = scan.files.map(f => {
+            let cls = 'badge-usdz';
+            if (f.type === 'json') cls = 'badge-json';
+            else if (f.type === 'glb') cls = 'badge-glb';
+            else if (f.type === 'log') cls = 'badge-log';
+            else if (f.type === 'usda') cls = 'badge-usda';
+            return '<span class="file-badge ' + cls + '">' + f.type + '</span>';
+          }).join('');
+
+          const actionBtns = scan.files.map(f => {
+            let btns = ` <a class="btn btn-download" href="/api/scans/${scan.scanName}/${f.name}" download>⬇ ${f.type.toUpperCase()}</a>`;
+            if (f.type === 'glb') {
+              btns += ` <a class="btn btn-view" href="/viewer?scan=${scan.scanName}&file=${f.name}" target="_blank">👁️ Viewer 3D</a>`;
+            }
+            return btns;
+          }).join('');
+
+          html += '<tr>';
+          html += '<td style="font-weight: 600;">' + scan.scanName + '</td>';
+          html += '<td>' + fileBadges + '</td>';
+          html += '<td>' + actionBtns + '<button class="btn btn-delete" onclick="deleteScan(\'' + scan.scanName + '\')">🗑️</button></td>';
+          html += '</tr>';
+        }
+        html += '</tbody></table>';
+        document.getElementById('tableContent').innerHTML = html;
+      } catch (error) {
+        document.getElementById('tableContent').innerHTML = '<div style="padding: 40px; text-align: center; color: #ef4444;">Errore.</div>';
+      }
+    }
+
+    async function deleteScan(scanName) {
+      if (!confirm('Eliminare?')) return;
+      await fetch('/api/scans/' + scanName, { method: 'DELETE' });
+      loadScans();
+    }
+
+    loadScans();
+    setInterval(loadScans, 5000);
+  </script>
+</body>
+</html>

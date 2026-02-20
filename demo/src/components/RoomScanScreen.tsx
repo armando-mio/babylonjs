@@ -110,7 +110,7 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
 
   const {viewProps, controls, state} = useRoomPlanView({
     scanName: scanNameRef.current,
-    exportType: ExportType.Parametric,
+    exportType: ExportType.Mesh,
     exportOnFinish: true,
     sendFileLoc: true,
     autoCloseOnTerminalStatus: false,

@@ -1,0 +1,90 @@
+#usda 1.0
+(
+    defaultPrim = "RoomScan_1771602251714"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "RoomScan_1771602251714" (
+    kind = "assembly"
+)
+{
+    def Xform "Section_grp" (
+        kind = "group"
+    )
+    {
+        def Xform "unidentified0" (
+            kind = "assembly"
+        )
+        {
+            matrix4d xformOp:transform = ( (0.9691798686981201, 0, 0.24635429680347443, 0), (0, 1, 0, 0), (-0.24635431170463562, 0, 0.9691798686981201, 0), (0.9494128823280334, 0.4516673684120178, -1.8346118927001953, 1) )
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+
+            def Xform "unidentified0_centerTop" (
+                kind = "assembly"
+            )
+            {
+                matrix4d xformOp:transform = ( (0.9691798094674667, 0, -0.24635428174772842, 0), (-0.2463542966488887, 0, -0.9691798094674667, 0), (0, 1, 0, 0), (-1.1102230246251565e-16, 1.4699999690055847, 0, 1) )
+                uniform token[] xformOpOrder = ["xformOp:transform"]
+            }
+        }
+    }
+
+    def Xform "Mesh_grp" (
+        kind = "group"
+    )
+    {
+        def Xform "Arch_grp" (
+            kind = "group"
+        )
+        {
+            def Xform "Wall_0_grp" (
+                kind = "group"
+                prepend references = [
+                    @./assets/Mesh/Walls/Wall0/Wall0.usda@,
+                    @./assets/Mesh/Walls/Wall0/Window0.usda@,
+                    @./assets/Mesh/Walls/Wall0/Window1.usda@
+                ]
+            )
+            {
+            }
+        }
+
+        def Xform "Floor_grp" (
+            kind = "group"
+            prepend references = @./assets/Mesh/Floors/Floor0.usda@
+        )
+        {
+        }
+
+        def Xform "Object_grp" (
+            kind = "group"
+        )
+        {
+            def Xform "Chair_grp" (
+                kind = "group"
+                prepend references = [
+                    @./assets/Mesh/Chair/Chair0.usda@,
+                    @./assets/Mesh/Chair/Chair1.usda@
+                ]
+            )
+            {
+            }
+
+            def Xform "Storage_grp" (
+                kind = "group"
+                prepend references = @./assets/Mesh/Storage/Storage0.usda@
+            )
+            {
+            }
+
+            def Xform "Table_grp" (
+                kind = "group"
+                prepend references = @./assets/Mesh/Table/Table0.usda@
+            )
+            {
+            }
+        }
+    }
+}
+
