@@ -38,9 +38,9 @@ The application logic is located in the `demo` directory. To run the app:
 
 HOW TO BUILD IN XCODE (for iOS): 
 - In demo/node_modules/react-native/third-party-podspecs/boost.podspec change url into 'https://archives.boost.io/release/...'
-- In XCODE > Pods (blue icon) > TARGETS > React-Core > Change iOS version to '13.4'
-- In XCODE > Pods (blue icon) > TARGETS > react-native-compass-heading > Change iOS version to '13.4'
-- Activate Metro Server in terminal (if you are in debug mode):
+- In XCODE > Pods (blue icon) > TARGETS > React-Core > Change iOS version to '17.0'
+- In XCODE > Pods (blue icon) > TARGETS > react-native-compass-heading > Change iOS version to '17.0'
+- Activate Metro Server in terminal (only if you are in debug mode, otherwise it starts by itself):
     ```bash
     cd demo
     npx react-native start
@@ -48,16 +48,16 @@ HOW TO BUILD IN XCODE (for iOS):
 - Delete the app from the iPhone before rebuilding it 
 - Compile on XCode
 
-HOW TO REBUILD IN XCODE (for iOS): 
+HOW TO REBUILD IN XCODE (for iOS):
+- Execute these commands in demo/ios
     ```bash
-    cd ios
-    rm -rf Pods                                   
-    rm Podfile.lock                               
-    bundle exec pod install  
-    rm -rf ~/Library/Developer/Xcode/DerivedData/*
+    rm -rf ~/Library/Developer/Xcode/DerivedData/* // type 'y' when you are asked
+    rm -rf Pods
+    rm Podfile.lock
+    bundle exec pod install
     ```
 
-HOW TO CONNECT TO THE SERVER?
+HOW TO CONNECT TO THE SERVER:
 - Start a new terminal and execute 
     ```bash 
     npx ngrok http 3001
