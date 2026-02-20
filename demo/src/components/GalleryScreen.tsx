@@ -1,9 +1,10 @@
-import React, {useEffect, useRef} from 'react';
-import {SafeAreaView, View, Text, FlatList, TouchableOpacity, Animated, Easing} from 'react-native';
-import {Eye, Smartphone, Box, ScanLine} from 'lucide-react-native';
+import React, {useEffect, useRef, useState} from 'react';
+import {SafeAreaView, View, Text, FlatList, TouchableOpacity, Animated, Easing, ActivityIndicator} from 'react-native';
+import {Eye, Smartphone, ScanLine} from 'lucide-react-native';
 import {AR_MODELS, ModelData} from '../../modelsData';
 import {ViewerMode} from '../types';
 import {styles} from '../styles';
+import {ROOM_SCAN_SERVER_URL} from '../constants';
 
 interface GalleryScreenProps {
   onOpenModel: (model: ModelData, mode: ViewerMode) => void;
@@ -48,6 +49,56 @@ export const MarqueeText = ({text, style, containerStyle}: {text: string; style:
 };
 
 export const GalleryScreen: React.FC<GalleryScreenProps> = ({onOpenModel, onOpenRoomScan}) => {
+  const [serverModels, setServerModels] = useState<ModelData[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Scarica le scansioni dal server
+  const fetchServerScans = async () => {
+    try {
+      const res = await fetch(`${ROOM_SCAN_SERVER_URL}/api/scans`);
+      const data = await res.json();
+      
+      if (data.scans) {
+        const fetched: ModelData[] = [];
+        data.scans.forEach((scan: any) => {
+          // Cerca il file GLB tra quelli generati dal server
+          const glbFile = scan.files.find((f: any) => f.type === 'glb');
+          if (glbFile) {
+            // Formatta la data per renderla leggibile
+            const scanDate = new Date(scan.timestamp);
+            const dateStr = `${scanDate.getDate()}/${scanDate.getMonth()+1} ${scanDate.getHours()}:${scanDate.getMinutes()}`;
+            
+            fetched.push({
+              id: scan.scanName,
+              name: `Stanza ${dateStr}`,
+              fileName: glbFile.name,
+              thumbnail: '🏠',
+              description: 'Scansione RoomPlan 3D',
+              scale: 1.0,
+              // Crea l'URL completo per far scaricare il file a BabylonJS
+              url: `${ROOM_SCAN_SERVER_URL}/api/scans/${scan.scanName}/${glbFile.name}`,
+            });
+          }
+        });
+        setServerModels(fetched);
+      }
+    } catch (error) {
+      console.log('Nessuna connessione al server per i modelli remoti:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchServerScans();
+    // Aggiorna la lista in background ogni 5 secondi
+    const interval = setInterval(fetchServerScans, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Unisci i modelli hardcoded base con quelli del server
+  const allModels = [...serverModels, ...AR_MODELS];
+
   return (
     <SafeAreaView style={styles.galleryContainer}>
       <View style={styles.galleryHeader}>
@@ -71,45 +122,48 @@ export const GalleryScreen: React.FC<GalleryScreenProps> = ({onOpenModel, onOpen
         </TouchableOpacity>
       )}
 
-      <FlatList
-        data={AR_MODELS}
-        numColumns={2}
-        contentContainerStyle={styles.galleryList}
-        columnWrapperStyle={styles.galleryRow}
-        keyExtractor={item => item.id}
-        renderItem={({item}) => (
-          <View style={styles.modelCard}>
-            <View>
-              <View style={styles.modelThumbnail}>
-                 <Text style={styles.modelEmoji}>{item.thumbnail}</Text>
+      {isLoading && serverModels.length === 0 ? (
+        <ActivityIndicator color="#a855f7" style={{marginTop: 40}} />
+      ) : (
+        <FlatList
+          data={allModels}
+          numColumns={2}
+          contentContainerStyle={styles.galleryList}
+          columnWrapperStyle={styles.galleryRow}
+          keyExtractor={item => item.id}
+          renderItem={({item}) => (
+            <View style={styles.modelCard}>
+              <View>
+                <View style={styles.modelThumbnail}>
+                   <Text style={styles.modelEmoji}>{item.thumbnail}</Text>
+                </View>
+                
+                <View style={styles.cardTextContainer}>
+                  {item.name.length > 15 ? (
+                     <MarqueeText text={item.name} style={styles.modelName} />
+                  ) : (
+                     <Text style={styles.modelName}>{item.name}</Text>
+                  )}
+                  <Text style={styles.modelDesc} numberOfLines={3} ellipsizeMode="tail">
+                    {item.description}
+                  </Text>
+                </View>
               </View>
-              
-              <View style={styles.cardTextContainer}>
-                {item.name.length > 15 ? (
-                   <MarqueeText text={item.name} style={styles.modelName} />
-                ) : (
-                   <Text style={styles.modelName}>{item.name}</Text>
-                )}
-                <Text style={styles.modelDesc} numberOfLines={3} ellipsizeMode="tail">
-                  {item.description}
-                </Text>
-              </View>
-            </View>
 
-            {/* MODIFICATO: Testo a sinistra, Icona a destra */}
-            <View style={styles.modelActions}>
-              <TouchableOpacity style={styles.arActionBtn} onPress={() => onOpenModel(item, 'AR')}>
-                <Text style={styles.actionBtnText}>AR</Text>
-                <Smartphone color="#22c55e" size={16} />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.vrActionBtn} onPress={() => onOpenModel(item, 'VR')}>
-                <Text style={styles.actionBtnText}>VR</Text>
-                <Eye color="#3b82f6" size={16} />
-              </TouchableOpacity>
+              <View style={styles.modelActions}>
+                <TouchableOpacity style={styles.arActionBtn} onPress={() => onOpenModel(item, 'AR')}>
+                  <Text style={styles.actionBtnText}>AR</Text>
+                  <Smartphone color="#22c55e" size={16} />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.vrActionBtn} onPress={() => onOpenModel(item, 'VR')}>
+                  <Text style={styles.actionBtnText}>VR</Text>
+                  <Eye color="#3b82f6" size={16} />
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
-        )}
-      />
+          )}
+        />
+      )}
     </SafeAreaView>
   );
 };

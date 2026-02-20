@@ -198,7 +198,17 @@ const App = () => {
       const instRoot = new TransformNode(instName, scn);
       instRoot.position = Vector3.Zero();
 
-      const result = await SceneLoader.ImportMeshAsync('', 'app:///', model.fileName, scn);
+      let result;
+      if (model.url) {
+        // Estrapola il path base e il nome file dall'URL
+        const lastSlash = model.url.lastIndexOf('/');
+        const rootUrl = model.url.substring(0, lastSlash + 1);
+        const fileName = model.url.substring(lastSlash + 1);
+        result = await SceneLoader.ImportMeshAsync('', rootUrl, fileName, scn);
+      } else {
+        result = await SceneLoader.ImportMeshAsync('', 'app:///', model.fileName, scn);
+      }
+
       result.meshes.forEach(mesh => {
         if (mesh.name === '__root__') mesh.parent = instRoot;
         mesh.isPickable = true;
@@ -604,7 +614,15 @@ const App = () => {
       modelRoot.position = new Vector3(0, GROUND_Y, 0);
       modelRootRef.current = modelRoot;
 
-      const result = await SceneLoader.ImportMeshAsync('', 'app:///', model.fileName, scn);
+      let result;
+      if (model.url) {
+        const lastSlash = model.url.lastIndexOf('/');
+        const rootUrl = model.url.substring(0, lastSlash + 1);
+        const fileName = model.url.substring(lastSlash + 1);
+        result = await SceneLoader.ImportMeshAsync('', rootUrl, fileName, scn);
+      } else {
+        result = await SceneLoader.ImportMeshAsync('', 'app:///', model.fileName, scn);
+      }
 
       // Detailed model load report
       const totalMeshes = result.meshes.length;

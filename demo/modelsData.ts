@@ -6,6 +6,7 @@ export interface ModelData {
   thumbnail: string; // emoji placeholder
   description: string;
   scale: number; // default scale multiplier
+  url?: string; // Optional URL for remote models (e.g., from RoomScan server)
 }
 
 export const AR_MODELS: ModelData[] = [
