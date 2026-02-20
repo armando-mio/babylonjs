@@ -1,12 +1,13 @@
 import React, {useEffect, useRef} from 'react';
 import {SafeAreaView, View, Text, FlatList, TouchableOpacity, Animated, Easing} from 'react-native';
-import {Eye, Smartphone, Box} from 'lucide-react-native';
+import {Eye, Smartphone, Box, ScanLine} from 'lucide-react-native';
 import {AR_MODELS, ModelData} from '../../modelsData';
 import {ViewerMode} from '../types';
 import {styles} from '../styles';
 
 interface GalleryScreenProps {
   onOpenModel: (model: ModelData, mode: ViewerMode) => void;
+  onOpenRoomScan?: () => void;
 }
 
 export const MarqueeText = ({text, style, containerStyle}: {text: string; style: any; containerStyle?: any}) => {
@@ -46,13 +47,29 @@ export const MarqueeText = ({text, style, containerStyle}: {text: string; style:
   );
 };
 
-export const GalleryScreen: React.FC<GalleryScreenProps> = ({onOpenModel}) => {
+export const GalleryScreen: React.FC<GalleryScreenProps> = ({onOpenModel, onOpenRoomScan}) => {
   return (
     <SafeAreaView style={styles.galleryContainer}>
       <View style={styles.galleryHeader}>
         <Text style={styles.galleryTitle}>Modelli 3D</Text>
         <Text style={styles.gallerySubtitle}>Scegli un modello per iniziare</Text>
       </View>
+
+      {/* Pulsante Scansiona Stanza */}
+      {onOpenRoomScan && (
+        <TouchableOpacity style={styles.roomScanBanner} onPress={onOpenRoomScan}>
+          <View style={styles.roomScanBannerLeft}>
+            <View style={styles.roomScanIconContainer}>
+              <ScanLine color="#a855f7" size={24} />
+            </View>
+            <View style={styles.roomScanBannerText}>
+              <Text style={styles.roomScanBannerTitle}>Scansiona Stanza</Text>
+              <Text style={styles.roomScanBannerSubtitle}>Scansiona la tua stanza in 3D con LiDAR</Text>
+            </View>
+          </View>
+          <Text style={styles.roomScanBannerArrow}>→</Text>
+        </TouchableOpacity>
+      )}
 
       <FlatList
         data={AR_MODELS}

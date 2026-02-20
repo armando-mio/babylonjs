@@ -542,4 +542,52 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 4,
     borderRadius: 4,
   },
+
+  // ================= ROOM SCAN BANNER =================
+  roomScanBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 16,
+    marginTop: 16,
+    backgroundColor: 'rgba(168, 85, 247, 0.1)',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(168, 85, 247, 0.3)',
+  },
+  roomScanBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  roomScanIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(168, 85, 247, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roomScanBannerText: {
+    flex: 1,
+  },
+  roomScanBannerTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  roomScanBannerSubtitle: {
+    color: '#a1a1aa',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  roomScanBannerArrow: {
+    color: '#a855f7',
+    fontSize: 22,
+    fontWeight: '700',
+    marginLeft: 8,
+  },
 });

@@ -51,6 +51,7 @@ import {setupPlaneDetection, PlaneDetectionResult} from './src/scene/planeDetect
 import {configureARRendering, configureVRRendering, resetRendering} from './src/scene/occlusion';
 import {GalleryScreen} from './src/components/GalleryScreen';
 import {ViewerUI} from './src/components/ViewerUI';
+import {RoomScanScreen} from './src/components/RoomScanScreen';
 
 // ================= APP =================
 const App = () => {
@@ -1858,9 +1859,22 @@ const App = () => {
     }
   }, []);
 
+  // ========== ROOM SCAN NAVIGATION ==========
+  const openRoomScan = useCallback(() => {
+    setCurrentScreen('roomscan');
+  }, []);
+
+  const closeRoomScan = useCallback(() => {
+    setCurrentScreen('gallery');
+  }, []);
+
   // ========== RENDER ==========
   if (currentScreen === 'gallery') {
-    return <GalleryScreen onOpenModel={openModel} />;
+    return <GalleryScreen onOpenModel={openModel} onOpenRoomScan={openRoomScan} />;
+  }
+
+  if (currentScreen === 'roomscan') {
+    return <RoomScanScreen onGoBack={closeRoomScan} />;
   }
 
   return (

@@ -9,6 +9,9 @@ export const TARGET_MODEL_SIZE = 1.0;
 export const {width: SCREEN_WIDTH} = Dimensions.get('window');
 export const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
 
+// ================= ROOM SCAN SERVER =================
+export const ROOM_SCAN_SERVER_URL = 'YOUR_NGROK_URL'; // Cambia con l'IP del tuo server ngrok
+
 // ================= SOLAR POSITION =================
 export const SUN_SPHERE_DISTANCE = 8;
 export const FALLBACK_LATITUDE = 45.957;
