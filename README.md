@@ -58,6 +58,7 @@ HOW TO REBUILD IN XCODE (for iOS):
     ```
 
 HOW TO CONNECT TO THE SERVER:
+- Install the usd2gtlf package from: https://github.com/mikelyndon/usd2gltf/releases/tag/v0.3.5 (and follow the documentation)
 - Start a new terminal and execute 
     ```bash 
     npx ngrok http 3001

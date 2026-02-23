@@ -1551,7 +1551,7 @@ const App = () => {
 
   // Auto-start XR/VR
   useEffect(() => {
-    if (sceneReady && modelLoaded && !xrSession && !vrActiveRef.current && !xrStartingRef.current) {
+    if (sceneReady && modelLoaded && viewerMode !== '3D' && !xrSession && !vrActiveRef.current && !xrStartingRef.current) {
       const t = setTimeout(() => {
         if (!xrSession && !vrActiveRef.current && !xrStartingRef.current) {
           toggleXR().catch((e) => log('ERROR', `Auto-start XR failed: ${e?.message || e}`));
@@ -1559,7 +1559,50 @@ const App = () => {
       }, 300);
       return () => clearTimeout(t);
     }
-  }, [sceneReady, modelLoaded, xrSession, toggleXR]);
+  }, [sceneReady, modelLoaded, xrSession, toggleXR, viewerMode]);
+
+  // Setup specifico per la modalità 3D Semplice
+  useEffect(() => {
+    if (sceneReady && modelLoaded && viewerMode === '3D') {
+      log('INFO', 'Configurazione visualizzatore 3D semplice avviata');
+      
+      const scn = sceneRef.current;
+      if (!scn) return;
+
+      // 1. Configura la telecamera e abilita le gesture (Pinch/Drag)
+      const mainCam = scn.getCameraByName('mainCamera') as ArcRotateCamera;
+      if (mainCam) {
+        mainCam.attachControl(); // Abilita i controlli touch
+        
+        // Centra la camera sull'oggetto (che è piazzato su GROUND_Y)
+        mainCam.target = new Vector3(0, GROUND_Y + 0.5, 0); 
+        
+        // Imposta una distanza fissa.
+        mainCam.radius = 2.5; 
+        
+        // Angolazione iniziale
+        mainCam.alpha = -Math.PI / 2 + 0.5;
+        mainCam.beta = Math.PI / 2.5;
+        
+        // Limiti di zoom (impedisce di entrare dentro l'oggetto o andare troppo lontano)
+        mainCam.lowerRadiusLimit = 1.0;
+        mainCam.upperRadiusLimit = 5.0;
+      }
+
+      // 2. Prepara il piano semi-trasparente per l'oggetto
+      const sg = scn.getMeshByName('shadowGround');
+      if (sg) {
+        sg.isVisible = true;
+        const mat = sg.material as StandardMaterial;
+        if (mat) {
+          mat.alpha = 0.5; // Rende il piano semi-trasparente
+          mat.diffuseColor = new Color3(0.1, 0.1, 0.15); // Colore scuro ed elegante
+        }
+      }
+
+      setStatus('Modalità 3D: Usa le dita per ruotare e zoomare.');
+    }
+  }, [sceneReady, modelLoaded, viewerMode]);
 
   // ========== CLEANUP & NAVIGATE TO GALLERY ==========
   const doFullCleanupAndNavigate = useCallback(() => {

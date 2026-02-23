@@ -1,6 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {SafeAreaView, View, Text, FlatList, TouchableOpacity, Animated, Easing, ActivityIndicator} from 'react-native';
-import {Eye, Smartphone, ScanLine} from 'lucide-react-native';
+import {Eye, Smartphone, ScanLine, Box} from 'lucide-react-native';
 import {AR_MODELS, ModelData} from '../../modelsData';
 import {ViewerMode} from '../types';
 import {styles} from '../styles';
@@ -150,12 +150,22 @@ export const GalleryScreen: React.FC<GalleryScreenProps> = ({onOpenModel, onOpen
                 </View>
               </View>
 
-              <View style={styles.modelActions}>
-                <TouchableOpacity style={styles.arActionBtn} onPress={() => onOpenModel(item, 'AR')}>
+              <View style={[styles.modelActions, { justifyContent: 'space-between', gap: 4 }]}>
+                <TouchableOpacity 
+                  style={[styles.arActionBtn, { flex: 1, paddingHorizontal: 4 }]} 
+                  onPress={() => onOpenModel(item, '3D')}>
+                  <Text style={styles.actionBtnText}>3D</Text>
+                  <Box color="#eab308" size={16} />
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.arActionBtn, { flex: 1, paddingHorizontal: 4 }]} 
+                  onPress={() => onOpenModel(item, 'AR')}>
                   <Text style={styles.actionBtnText}>AR</Text>
                   <Smartphone color="#22c55e" size={16} />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.vrActionBtn} onPress={() => onOpenModel(item, 'VR')}>
+                <TouchableOpacity 
+                  style={[styles.vrActionBtn, { flex: 1, paddingHorizontal: 4 }]} 
+                  onPress={() => onOpenModel(item, 'VR')}>
                   <Text style={styles.actionBtnText}>VR</Text>
                   <Eye color="#3b82f6" size={16} />
                 </TouchableOpacity>

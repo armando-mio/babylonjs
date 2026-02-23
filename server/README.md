@@ -1,8 +1,8 @@
 # RoomPlan Scanner Server
 
-Server per ricevere e visualizzare le scansioni delle stanze dall'app BabylonJS.
+Server to receive and display room scans from the BabylonJS app.
 
-## Avvio
+## Start
 
 ```bash
 cd server
@@ -10,25 +10,25 @@ npm install
 npm start
 ```
 
-Il server sarà disponibile su `http://localhost:3001`.
+The server will be available at `http://localhost:3001`.
 
 ## API
 
-| Metodo | Endpoint | Descrizione |
+| Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/upload` | Upload file di scansione (.usdz + .json) |
-| GET | `/api/scans` | Lista tutte le scansioni |
-| GET | `/api/scans/:name/:file` | Download singolo file |
-| DELETE | `/api/scans/:name` | Elimina una scansione |
+| POST | `/api/upload` | Upload scan files (.usdz + .json) |
+| GET | `/api/scans` | List all scans |
+| GET | `/api/scans/:name/:file` | Download a single file |
+| DELETE | `/api/scans/:name` | Delete a scan |
 
-## Dashboard Web
+## Web Dashboard
 
-Apri `http://localhost:3001` nel browser per visualizzare la dashboard con la tabella delle scansioni ricevute.
+Open `http://localhost:3001` in your browser to view the dashboard with the table of received scans.
 
-## Configurazione
+## Configuration
 
-Assicurati di aggiornare l'IP del server nel file `demo/src/constants.ts`:
+Make sure to update the server IP in `demo/src/constants.ts`:
 
 ```typescript
-export const ROOM_SCAN_SERVER_URL = 'http://TUO_IP:3001';
+export const ROOM_SCAN_SERVER_URL = 'http://YOUR_NGROK_URL';
 ```
