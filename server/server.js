@@ -6,18 +6,24 @@ const fs = require('fs');
 const { exec } = require('child_process');
 const util = require('util');
 const { NodeIO } = require('@gltf-transform/core');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 // Trasforma exec in una Promise per usare async/await
 const execPromise = util.promisify(exec);
 
 const app = express();
-const PORT = 3001;
+
+// ================= CONSTANTS & ENV VARIABLES =================
+// Usa le variabili dal .env oppure i valori di default di fallback
+const PORT = process.env.SERVER_PORT || 3001;
+const UPLOADS_FOLDER_NAME = process.env.SERVER_UPLOAD_DIR || 'uploads';
+const MAX_FILE_SIZE = (process.env.SERVER_MAX_FILE_SIZE_MB || 100) * 1024 * 1024; // Converte MB in Bytes
 
 app.use(cors());
 app.use(express.json());
 
-// Directory per i file caricati
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
+// Directory per i file caricati (Dinamica tramite .env)
+const UPLOADS_DIR = path.join(__dirname, UPLOADS_FOLDER_NAME);
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, {recursive: true});
 }
@@ -39,7 +45,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB max
+  limits: { fileSize: MAX_FILE_SIZE }, // Limite dinamico tramite .env
 });
 
 // ========== PIPELINE USDZ -> GLB CON DEBUGGING AVANZATO ==========

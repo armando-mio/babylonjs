@@ -1,6 +1,7 @@
 import {Color3, Vector3} from '@babylonjs/core';
 import {Dimensions} from 'react-native';
 import SunCalc from 'suncalc';
+declare const process: { env: Record<string, string | undefined> };
 
 // ================= CONSTANTS =================
 export const GROUND_Y = -1.3;
@@ -10,12 +11,18 @@ export const {width: SCREEN_WIDTH} = Dimensions.get('window');
 export const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
 
 // ================= ROOM SCAN SERVER =================
-export const ROOM_SCAN_SERVER_URL = 'YOUR_NGROK_URL'; // Cambia con l'IP del tuo server ngrok
+export const ROOM_SCAN_SERVER_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.xxx:3001';
 
 // ================= SOLAR POSITION =================
 export const SUN_SPHERE_DISTANCE = 8;
-export const FALLBACK_LATITUDE = 45.957;
-export const FALLBACK_LONGITUDE = 12.657;
+
+export const FALLBACK_LATITUDE = process.env.EXPO_PUBLIC_FALLBACK_LATITUDE 
+  ? parseFloat(process.env.EXPO_PUBLIC_FALLBACK_LATITUDE) 
+  : 51.5072;
+
+export const FALLBACK_LONGITUDE = process.env.EXPO_PUBLIC_FALLBACK_LONGITUDE 
+  ? parseFloat(process.env.EXPO_PUBLIC_FALLBACK_LONGITUDE) 
+  : 0.1276;
 
 export interface SunPosition {
   azimuth: number;
