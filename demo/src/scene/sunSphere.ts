@@ -6,9 +6,16 @@ import {
   StandardMaterial,
   Mesh,
   DirectionalLight,
+  ShadowGenerator,
 } from '@babylonjs/core';
 import {log} from '../logger';
 import {GROUND_Y, SUN_SPHERE_DISTANCE, getSunPosition} from '../constants';
+
+/**
+ * Soglia altitudine sole (in radianti). Sotto questa soglia le ombre vengono disabilitate
+ * perché il sole è troppo basso all'orizzonte per proiettare ombre realistiche.
+ */
+const MIN_SHADOW_ALTITUDE_RAD = 10 * (Math.PI / 180); // 10 gradi
 
 export function createSunSphere(
   scene: Scene,
@@ -16,6 +23,7 @@ export function createSunSphere(
   lon: number,
   dirLight: DirectionalLight | null,
   isAR: boolean,
+  shadowGen?: ShadowGenerator | null,
 ): Mesh {
   const now = new Date();
   const sunPos = getSunPosition(lat, lon, now);
@@ -54,14 +62,33 @@ export function createSunSphere(
   if (dirLight) {
     const sunDir = new Vector3(-sunX, -finalSunY + GROUND_Y, -sunZ).normalize();
     dirLight.direction = sunDir;
-    dirLight.position = new Vector3(sunX * 0.5, finalSunY * 0.5, sunZ * 0.5);
+    // Keep light position at origin — only direction matters for directional lights.
+    // Moving position offsets the shadow frustum which causes shadows to disappear
+    // when the model is not between the camera and the sun.
+    dirLight.position = new Vector3(0, 5, 0);
     dirLight.intensity = sunPos.isAboveHorizon ? 1.2 : 0.3;
-    log('INFO', '☀️ Luce direzionale allineata al sole');
+    log('INFO', 'Luce direzionale allineata al sole');
+  }
+
+  // Ombre: disabilita se il sole è troppo basso o sotto l'orizzonte
+  if (shadowGen) {
+    if (!sunPos.isAboveHorizon || sunPos.altitude < MIN_SHADOW_ALTITUDE_RAD) {
+      // Sole sotto orizzonte o troppo basso → niente ombre
+      shadowGen.setDarkness(1); // darkness=1 → ombra invisibile
+      log('INFO', 'Ombre disabilitate: sole troppo basso');
+    } else {
+      // Graduale: ombre più leggere quando il sole è basso (10°-30°)
+      const maxAlt = 30 * (Math.PI / 180);
+      const t = Math.min((sunPos.altitude - MIN_SHADOW_ALTITUDE_RAD) / (maxAlt - MIN_SHADOW_ALTITUDE_RAD), 1);
+      const darkness = 0.6 + (1 - t) * 0.3; // 0.6 (sole alto) → 0.9 (sole basso)
+      shadowGen.setDarkness(darkness);
+      log('INFO', `Ombre attive: darkness=${darkness.toFixed(2)}`);
+    }
   }
 
   const azDeg = (sunPos.azimuth * 180 / Math.PI).toFixed(1);
   const altDeg = (sunPos.altitude * 180 / Math.PI).toFixed(1);
-  log('INFO', `☀️ Sole: az=${azDeg}° alt=${altDeg}°`);
+  log('INFO', `Sole: az=${azDeg} alt=${altDeg}`);
 
   return sunSphere;
 }

@@ -6,18 +6,17 @@ const fs = require('fs');
 const { exec } = require('child_process');
 const util = require('util');
 const { NodeIO } = require('@gltf-transform/core');
-require('dotenv').config({ path: path.join(__dirname, '../.env') });
+// DRACO rimosso — non compatibile con BabylonJS React Native su iOS
 
 // Trasforma exec in una Promise per usare async/await
 const execPromise = util.promisify(exec);
 
 const app = express();
 
-// ================= CONSTANTS & ENV VARIABLES =================
-// Usa le variabili dal .env oppure i valori di default di fallback
-const PORT = process.env.SERVER_PORT || 3001;
-const UPLOADS_FOLDER_NAME = process.env.SERVER_UPLOAD_DIR || 'uploads';
-const MAX_FILE_SIZE = (process.env.SERVER_MAX_FILE_SIZE_MB || 100) * 1024 * 1024; // Converte MB in Bytes
+// ================= CONSTANTS =================
+const PORT = 3001;
+const UPLOADS_FOLDER_NAME = 'uploads';
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 app.use(cors());
 app.use(express.json());
@@ -45,8 +44,23 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: MAX_FILE_SIZE }, // Limite dinamico tramite .env
+  limits: { fileSize: MAX_FILE_SIZE },
 });
+
+// Multer separato per import modelli — salva in cartella temporanea
+// per evitare problemi di ordinamento dei campi multipart
+// (il file arriva prima dei campi testo, quindi req.body.scanName non è disponibile)
+const modelImportStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const tmpDir = path.join(UPLOADS_DIR, '_tmp');
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+    cb(null, tmpDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, `${Date.now()}_${file.originalname}`);
+  },
+});
+const modelUpload = multer({ storage: modelImportStorage, limits: { fileSize: MAX_FILE_SIZE } });
 
 // ========== PIPELINE USDZ -> GLB CON DEBUGGING AVANZATO ==========
 async function convertAndIntegrate(usdzPath, jsonPath, outputGlbPath, scanDir) {
@@ -89,7 +103,8 @@ async function convertAndIntegrate(usdzPath, jsonPath, outputGlbPath, scanDir) {
       throw new Error("Il tool usd2gltf ha restituito un errore critico.");
     }
 
-    // 3. INIEZIONE JSON METADATA
+    // 3. INIEZIONE JSON METADATA (senza DRACO — la compressione DRACO
+    //    non è compatibile con BabylonJS React Native su iOS)
     logContent += `[STEP 3] Iniezione Metadati JSON\n`;
     if (jsonPath && fs.existsSync(jsonPath)) {
       console.log('⚙️ [3/4] Iniezione dei metadati JSON nel GLB...');
@@ -98,15 +113,18 @@ async function convertAndIntegrate(usdzPath, jsonPath, outputGlbPath, scanDir) {
       const metadata = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
       
       document.getRoot().setExtras(metadata);
+
       await io.write(outputGlbPath, document);
       fs.unlinkSync(tempGlbPath);
       
-      logContent += `SUCCESS: JSON iniettato in 'extras'.\n\n`;
+      logContent += `SUCCESS: JSON iniettato nel GLB.\n\n`;
       console.log('✅ [3/4] Metadati inseriti.');
     } else {
+      // Nessun JSON — rinomina direttamente il file temp
       fs.renameSync(tempGlbPath, outputGlbPath);
-      logContent += `INFO: Nessun JSON trovato, salto l'iniezione.\n\n`;
-      console.log('⏩ [3/4] Nessun JSON da iniettare, salto.');
+      
+      logContent += `INFO: Nessun JSON trovato, GLB salvato senza metadati.\n\n`;
+      console.log('⏩ [3/4] GLB salvato senza metadati.');
     }
 
     logContent += `[STEP 4] Salvataggio completato.\nFile finale: ${outputGlbPath}\n`;
@@ -149,7 +167,7 @@ app.post(
         uploadedFiles.push({ name: files.jsonFile[0].originalname, size: files.jsonFile[0].size, type: 'json' });
       }
 
-      const metadata = { scanName, timestamp: new Date().toISOString(), files: uploadedFiles };
+      const metadata = { scanName, timestamp: new Date().toISOString(), files: uploadedFiles, deviceId: req.body.deviceId || null };
 
       const scanDir = path.join(UPLOADS_DIR, scanName);
       fs.writeFileSync(path.join(scanDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
@@ -174,7 +192,10 @@ app.get('/api/scans', (req, res) => {
   try {
     if (!fs.existsSync(UPLOADS_DIR)) return res.json({scans: []});
 
-    const scanDirs = fs.readdirSync(UPLOADS_DIR).filter(name => fs.statSync(path.join(UPLOADS_DIR, name)).isDirectory());
+    const filterDeviceId = req.query.deviceId || null;
+    const scanDirs = fs.readdirSync(UPLOADS_DIR).filter(name =>
+      name !== '_tmp' && fs.statSync(path.join(UPLOADS_DIR, name)).isDirectory()
+    );
 
     const scans = scanDirs
       .map(dirName => {
@@ -195,7 +216,20 @@ app.get('/api/scans', (req, res) => {
           return { name: f, size: stats.size, type: type, createdAt: stats.birthtime.toISOString() };
         });
 
-        return { scanName: dirName, timestamp: metadata?.timestamp || fs.statSync(dirPath).birthtime.toISOString(), files: fileDetails };
+        return {
+          scanName: dirName,
+          timestamp: metadata?.timestamp || fs.statSync(dirPath).birthtime.toISOString(),
+          displayName: metadata?.displayName || null,
+          description: metadata?.description || null,
+          source: metadata?.source || null,
+          deviceId: metadata?.deviceId || null,
+          files: fileDetails,
+        };
+      })
+      .filter(scan => {
+        // Se viene passato un deviceId, mostra solo i modelli di quel device (o quelli senza deviceId per retrocompatibilità)
+        if (!filterDeviceId) return true;
+        return !scan.deviceId || scan.deviceId === filterDeviceId;
       })
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
@@ -218,7 +252,168 @@ app.delete('/api/scans/:scanName', (req, res) => {
   res.json({success: true, message: 'Scansione eliminata'});
 });
 
+// ========== AGGIORNA NOME/DESCRIZIONE MODELLO ==========
+app.patch('/api/scans/:scanName', (req, res) => {
+  const dirPath = path.join(UPLOADS_DIR, req.params.scanName);
+  if (!fs.existsSync(dirPath)) return res.status(404).json({success: false, message: 'Scansione non trovata'});
+
+  const metaPath = path.join(dirPath, 'metadata.json');
+  let metadata = {};
+  if (fs.existsSync(metaPath)) {
+    try { metadata = JSON.parse(fs.readFileSync(metaPath, 'utf-8')); } catch (e) {}
+  }
+
+  if (req.body.displayName !== undefined) metadata.displayName = req.body.displayName;
+  if (req.body.description !== undefined) metadata.description = req.body.description;
+
+  fs.writeFileSync(metaPath, JSON.stringify(metadata, null, 2));
+  res.json({success: true, message: 'Aggiornato'});
+});
+
+// ========== UPLOAD MODELLO IMPORTATO (GLB/GLTF/USDZ) ==========
+// Usa modelUpload (multer separato con temp dir) per evitare che multer crei
+// cartelle scan_XXXX spurie prima che i campi testo siano disponibili.
+app.post('/api/upload-model', modelUpload.single('modelFile'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({success: false, message: 'Nessun file ricevuto'});
+    }
+    const modelName = req.body.modelName || `model_${Date.now()}`;
+    const scanDir = path.join(UPLOADS_DIR, modelName);
+    if (!fs.existsSync(scanDir)) {
+      fs.mkdirSync(scanDir, {recursive: true});
+    }
+
+    const fileName = req.file.originalname;
+    const fileNameLower = fileName.toLowerCase();
+    const isUsdz = fileNameLower.endsWith('.usdz');
+    const isGlb = fileNameLower.endsWith('.glb');
+
+    // Sposta il file dalla cartella temp alla cartella definitiva del modello
+    const tempPath = req.file.path;
+    const finalPath = path.join(scanDir, fileName);
+    fs.renameSync(tempPath, finalPath);
+
+    console.log(`📥 Modello "${modelName}" caricato: ${fileName} (${(req.file.size / 1024).toFixed(1)} KB)`);
+
+    if (isUsdz) {
+      // ===== PIPELINE USDZ → GLB =====
+      const glbFileName = fileName.replace(/\.usdz$/i, '.glb');
+      const glbPath = path.join(scanDir, glbFileName);
+
+      const metadata = {
+        scanName: modelName,
+        timestamp: new Date().toISOString(),
+        files: [
+          {name: fileName, size: req.file.size, type: 'usdz'},
+        ],
+        source: 'imported',
+        deviceId: req.body.deviceId || null,
+      };
+
+      // Conversione USDZ → GLB con usd2gltf
+      try {
+        console.log(`🔄 Pipeline USDZ→GLB per: ${fileName}`);
+        await execPromise(`usd2gltf -i "${finalPath}" -o "${glbPath}" -f`);
+        if (fs.existsSync(glbPath)) {
+          const glbStats = fs.statSync(glbPath);
+          metadata.files.push({name: glbFileName, size: glbStats.size, type: 'glb'});
+          console.log(`✅ Pipeline: GLB generato automaticamente → ${glbFileName}`);
+        }
+      } catch (convErr) {
+        console.log(`⚠️ Conversione USDZ→GLB fallita per ${fileName}: ${convErr.message}`);
+      }
+
+      fs.writeFileSync(path.join(scanDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
+
+      // Restituiamo l'URL del GLB (per BabylonJS) se disponibile, altrimenti errore
+      const glbExists = fs.existsSync(glbPath);
+      res.json({
+        success: true,
+        glbReady: glbExists,
+        message: 'Modello USDZ caricato' + (glbExists ? ' e convertito in GLB' : ' (conversione GLB fallita)'),
+        modelName,
+        fileName: glbExists ? glbFileName : fileName,
+        url: glbExists ? `/api/scans/${modelName}/${glbFileName}` : null,
+      });
+    } else {
+      // ===== PIPELINE GLB/GLTF → USDZ =====
+      const metadata = {
+        scanName: modelName,
+        timestamp: new Date().toISOString(),
+        files: [{name: fileName, size: req.file.size, type: isGlb ? 'glb' : 'gltf'}],
+        source: 'imported',
+        deviceId: req.body.deviceId || null,
+      };
+      fs.writeFileSync(path.join(scanDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
+
+      // Pipeline automatica: genera anche USDZ dal GLB importato (in background)
+      if (isGlb) {
+        const usdzFileName = fileName.replace(/\.glb$/i, '.usdz');
+        const usdzPath = path.join(scanDir, usdzFileName);
+        const scriptPath = path.join(__dirname, 'glb_to_usdz.swift');
+        exec(`swift "${scriptPath}" "${finalPath}" "${usdzPath}"`, (convErr, stdout, stderr) => {
+          if (convErr) {
+            console.log(`⚠️ Conversione automatica GLB→USDZ fallita per ${fileName}: ${convErr.message}`);
+            if (stderr) console.log(`  stderr: ${stderr}`);
+          } else if (fs.existsSync(usdzPath)) {
+            console.log(`✅ Pipeline: USDZ generato automaticamente → ${usdzFileName}`);
+          }
+        });
+      }
+
+      res.json({
+        success: true,
+        glbReady: true,
+        message: 'Modello caricato con successo',
+        modelName,
+        fileName,
+        url: `/api/scans/${modelName}/${fileName}`,
+      });
+    }
+  } catch (error) {
+    console.error('❌ Errore upload modello:', error);
+    res.status(500).json({success: false, message: error.message});
+  }
+});
+
 // ========== FRONTEND (DASHBOARD E VIEWER) ==========
+
+// ========== CONVERSIONE GLB → USDZ ==========
+app.post('/api/scans/:scanName/convert-usdz', async (req, res) => {
+  const dirPath = path.join(UPLOADS_DIR, req.params.scanName);
+  if (!fs.existsSync(dirPath)) return res.status(404).json({success: false, message: 'Scansione non trovata'});
+
+  // Cerca il file GLB nella directory
+  const files = fs.readdirSync(dirPath);
+  const glbFile = files.find(f => f.toLowerCase().endsWith('.glb'));
+  if (!glbFile) return res.status(404).json({success: false, message: 'Nessun file GLB trovato'});
+
+  const glbPath = path.join(dirPath, glbFile);
+  const usdzFileName = glbFile.replace(/\.glb$/i, '.usdz');
+  const usdzPath = path.join(dirPath, usdzFileName);
+
+  // Se esiste già il USDZ, restituiscilo direttamente
+  if (fs.existsSync(usdzPath)) {
+    return res.json({success: true, message: 'USDZ già disponibile', fileName: usdzFileName, url: `/api/scans/${req.params.scanName}/${usdzFileName}`});
+  }
+
+  try {
+    console.log(`🔄 Conversione GLB → USDZ per: ${glbFile}`);
+    const scriptPath = path.join(__dirname, 'glb_to_usdz.swift');
+    await execPromise(`swift "${scriptPath}" "${glbPath}" "${usdzPath}"`);
+    
+    if (fs.existsSync(usdzPath)) {
+      console.log(`✅ USDZ generato: ${usdzFileName}`);
+      res.json({success: true, message: 'Conversione completata', fileName: usdzFileName, url: `/api/scans/${req.params.scanName}/${usdzFileName}`});
+    } else {
+      res.status(500).json({success: false, message: 'Conversione fallita: file non generato'});
+    }
+  } catch (error) {
+    console.error('❌ Errore conversione GLB→USDZ:', error.message);
+    res.status(500).json({success: false, message: `Errore conversione: ${error.message}`});
+  }
+});
 
 app.get('/viewer', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'viewer.html'));

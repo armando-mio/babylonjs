@@ -26,6 +26,7 @@ import {
   RawTexture,
   Texture,
   PBRMaterial,
+  DracoCompression,
 } from '@babylonjs/core';
 import '@babylonjs/loaders';
 import {gyroscope, setUpdateIntervalForType, SensorTypes} from 'react-native-sensors';
@@ -52,6 +53,15 @@ import {configureARRendering, configureVRRendering, resetRendering} from './src/
 import {GalleryScreen} from './src/components/GalleryScreen';
 import {ViewerUI} from './src/components/ViewerUI';
 import {RoomScanScreen} from './src/components/RoomScanScreen';
+
+// ===== Configurazione DRACOLoader per decompressione mesh compressi =====
+DracoCompression.Configuration = {
+  decoder: {
+    wasmUrl: 'https://www.gstatic.com/draco/v1/decoders/draco_wasm_wrapper_gltf.js',
+    wasmBinaryUrl: 'https://www.gstatic.com/draco/v1/decoders/draco_decoder_gltf.wasm',
+    fallbackUrl: 'https://www.gstatic.com/draco/v1/decoders/draco_decoder_gltf.js',
+  },
+};
 
 // ================= APP =================
 const App = () => {
@@ -131,6 +141,11 @@ const App = () => {
   const placingRef = useRef(false);
   const arFloorYRef = useRef<number>(0);
   const canPlaceOnSurfaceRef = useRef(false);
+
+  // Multi-touch gesture tracking for AR/VR rotate/scale
+  const activeTouchesRef = useRef<Map<number, {x: number; y: number}>>(new Map());
+  const lastPinchDistRef = useRef<number | null>(null);
+  const lastRotationAngleRef = useRef<number | null>(null);
   const originalMaterialsRef = useRef<Map<string, {
     // StandardMaterial props
     diffuse?: Color3;
@@ -328,6 +343,12 @@ const App = () => {
       const cur = root.scaling.x;
       const step = baseScale * 0.1;
       const next = Math.max(baseScale * 0.05, cur + direction * step);
+      // Adjust Y for placed instances to keep bottom on ground
+      if (root.name.startsWith('placed_') && cur > 0) {
+        const groundLevel = vrActiveRef.current ? GROUND_Y : (Number.isFinite(arFloorYRef.current) ? arFloorYRef.current : root.position.y);
+        const offset = root.position.y - groundLevel;
+        root.position.y = groundLevel + offset * (next / cur);
+      }
       root.scaling = new Vector3(next, next, next);
       const pct = ((next / baseScale) * 100).toFixed(0);
       log('INFO', `Scala: ${pct}%`);
@@ -758,14 +779,15 @@ const App = () => {
       shadowGen.useBlurExponentialShadowMap = true;
       shadowGen.blurKernel = 64;
       shadowGen.darkness = 0.6;
-      shadowGen.bias = 0.001;
-      shadowGen.normalBias = 0.02;
+      shadowGen.bias = 0.005;
+      shadowGen.normalBias = 0.05;
       shadowGen.depthScale = 50;
       shadowGen.frustumEdgeFalloff = 1.0;
       shadowGen.useKernelBlur = true;
       shadowGen.blurScale = 2;
       shadowGen.setDarkness(0.6);
       shadowGen.transparencyShadow = true;
+      shadowGen.useContactHardeningShadow = false;
       shadowGenRef.current = shadowGen;
       dirLight.shadowMinZ = 0.1;
       dirLight.shadowMaxZ = 40;
@@ -807,6 +829,72 @@ const App = () => {
       // Pointer / tap handler
       newScene.onPointerObservable.add(evtData => {
         if (disposingRef.current) return;
+
+        // ── Multi-touch gesture: rotate & scale selected instance in AR/VR ──
+        const ptrId = (evtData.event as any)?.pointerId ?? 0;
+        if (evtData.type === PointerEventTypes.POINTERDOWN) {
+          activeTouchesRef.current.set(ptrId, {x: evtData.event.clientX, y: evtData.event.clientY});
+          // Reset gesture baselines when a new finger lands
+          if (activeTouchesRef.current.size === 2) {
+            const pts = Array.from(activeTouchesRef.current.values());
+            const dx = pts[1].x - pts[0].x;
+            const dy = pts[1].y - pts[0].y;
+            lastPinchDistRef.current = Math.sqrt(dx * dx + dy * dy);
+            lastRotationAngleRef.current = Math.atan2(dy, dx);
+          }
+          return;
+        }
+        if (evtData.type === PointerEventTypes.POINTERUP) {
+          activeTouchesRef.current.delete(ptrId);
+          if (activeTouchesRef.current.size < 2) {
+            lastPinchDistRef.current = null;
+            lastRotationAngleRef.current = null;
+          }
+          return;
+        }
+        if (evtData.type === PointerEventTypes.POINTERMOVE) {
+          if (activeTouchesRef.current.has(ptrId)) {
+            activeTouchesRef.current.set(ptrId, {x: evtData.event.clientX, y: evtData.event.clientY});
+          }
+          // Only process 2-finger gestures on selected placed instances in AR/VR
+          if (activeTouchesRef.current.size === 2 && selectedInstanceRef.current) {
+            const pts = Array.from(activeTouchesRef.current.values());
+            const dx = pts[1].x - pts[0].x;
+            const dy = pts[1].y - pts[0].y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const angle = Math.atan2(dy, dx);
+            const inst = selectedInstanceRef.current;
+
+            // Pinch-to-scale
+            if (lastPinchDistRef.current !== null && lastPinchDistRef.current > 0) {
+              const scaleFactor = dist / lastPinchDistRef.current;
+              const curScale = inst.scaling.x;
+              const baseScale = (inst as any)._baseScale || 1;
+              const newScale = Math.max(baseScale * 0.05, Math.min(baseScale * 5, curScale * scaleFactor));
+              // Adjust Y position to keep model bottom on the ground
+              if (inst.name.startsWith('placed_') && curScale > 0) {
+                const groundLevel = vrActiveRef.current ? GROUND_Y : (Number.isFinite(arFloorYRef.current) ? arFloorYRef.current : inst.position.y);
+                const offsetAboveGround = inst.position.y - groundLevel;
+                inst.position.y = groundLevel + offsetAboveGround * (newScale / curScale);
+              }
+              inst.scaling.set(newScale, newScale, newScale);
+            }
+            lastPinchDistRef.current = dist;
+
+            // Two-finger rotation (Y axis)
+            if (lastRotationAngleRef.current !== null) {
+              let deltaAngle = angle - lastRotationAngleRef.current;
+              // Normalize to [-PI, PI]
+              if (deltaAngle > Math.PI) deltaAngle -= 2 * Math.PI;
+              if (deltaAngle < -Math.PI) deltaAngle += 2 * Math.PI;
+              inst.rotation.y += deltaAngle;
+            }
+            lastRotationAngleRef.current = angle;
+          }
+          return;
+        }
+
+        // ── Tap handler (selection) ──
         if (evtData.type !== PointerEventTypes.POINTERTAP) return;
         try {
         const pickResult = newScene.pick(newScene.pointerX, newScene.pointerY);
@@ -1025,7 +1113,6 @@ const App = () => {
           const maxTilt = Math.PI / 6; // 30deg
           vrCam.lowerBetaLimit = Math.PI / 2 - maxTilt;
           vrCam.upperBetaLimit = Math.PI / 2 + maxTilt;
-          vrCam.detachControl();
           vrCam.inputs.clear();
 
           const headingRad = (compassHeading * Math.PI) / 180;
@@ -1055,6 +1142,22 @@ const App = () => {
 
         // Configure rendering groups for VR
         configureVRRendering(scene);
+
+        // Widen shadow map coverage for VR world (large area with mountains/trees)
+        if (dirLightRef.current) {
+          dirLightRef.current.shadowMinZ = 0.1;
+          dirLightRef.current.shadowMaxZ = 80;
+          dirLightRef.current.autoUpdateExtends = true;
+          dirLightRef.current.autoCalcShadowZBounds = true;
+        }
+        if (shadowGenRef.current) {
+          // Increase shadow quality for VR's larger scene
+          shadowGenRef.current.useBlurExponentialShadowMap = true;
+          shadowGenRef.current.blurKernel = 32;
+          shadowGenRef.current.depthScale = 100;
+          shadowGenRef.current.frustumEdgeFalloff = 1.0;
+          shadowGenRef.current.transparencyShadow = true;
+        }
 
         // Create VR world (sky, mountains, trees, clouds)
         const vrGridPlane = createVRWorld(scene, shadowGenRef.current);
@@ -1115,7 +1218,7 @@ const App = () => {
 
         // Sun sphere
         try {
-          sunSphereRef.current = createSunSphere(scene, deviceLatRef.current, deviceLonRef.current, dirLightRef.current, false);
+          sunSphereRef.current = createSunSphere(scene, deviceLatRef.current, deviceLonRef.current, dirLightRef.current, false, shadowGenRef.current);
         } catch (sunErr: any) {
           log('WARN', `VR: Errore sole: ${sunErr.message}`);
         }
@@ -1484,7 +1587,7 @@ const App = () => {
 
       // Sun sphere for AR — align directional light to real sun but hide the visual sphere
       try {
-        sunSphereRef.current = createSunSphere(scene, deviceLatRef.current, deviceLonRef.current, dirLightRef.current, true);
+        sunSphereRef.current = createSunSphere(scene, deviceLatRef.current, deviceLonRef.current, dirLightRef.current, true, shadowGenRef.current);
         // Hide the visual sun meshes in AR — only light alignment matters
         if (sunSphereRef.current) sunSphereRef.current.isVisible = false;
         const sunGlowAR = scene.getMeshByName('sunGlow');
@@ -1577,26 +1680,71 @@ const App = () => {
         // Centra la camera sull'oggetto (che è piazzato su GROUND_Y)
         mainCam.target = new Vector3(0, GROUND_Y + 0.5, 0); 
         
-        // Imposta una distanza fissa.
+        // Impostazioni iniziali — camera davanti al modello
         mainCam.radius = 2.5; 
-        
-        // Angolazione iniziale
-        mainCam.alpha = -Math.PI / 2 + 0.5;
+        mainCam.alpha = Math.PI / 2;
         mainCam.beta = Math.PI / 2.5;
         
-        // Limiti di zoom (impedisce di entrare dentro l'oggetto o andare troppo lontano)
-        mainCam.lowerRadiusLimit = 1.0;
-        mainCam.upperRadiusLimit = 5.0;
+        // Limiti di zoom
+        mainCam.lowerRadiusLimit = 0.5;
+        mainCam.upperRadiusLimit = 8.0;
+
+        // ---- GESTURE MIGLIORATE (standard per app 3D viewer) ----
+        // Sensibilità orbit: 1 dito per ruotare
+        mainCam.angularSensibilityX = 1500;  // sensibilità rotazione orizzontale
+        mainCam.angularSensibilityY = 1500;  // sensibilità rotazione verticale
+        
+        // Sensibilità pinch-to-zoom
+        mainCam.pinchDeltaPercentage = 0.005;
+        mainCam.wheelDeltaPercentage = 0.01;
+        
+        // Disabilita panning (2 dita) — solo rotazione e zoom
+        mainCam.panningSensibility = 0;
+        
+        // Inerzia per movimenti fluidi (standard nelle app 3D moderne)
+        mainCam.inertia = 0.85;
+        
+        // Limiti di rotazione verticale (evita capovolgimenti)
+        mainCam.lowerBetaLimit = 0.1;
+        mainCam.upperBetaLimit = Math.PI - 0.1;
       }
 
-      // 2. Prepara il piano semi-trasparente per l'oggetto
+      // 2. Ground quasi invisibile — solo ombre visibili
       const sg = scn.getMeshByName('shadowGround');
       if (sg) {
-        sg.isVisible = true;
-        const mat = sg.material as StandardMaterial;
-        if (mat) {
-          mat.alpha = 0.5; // Rende il piano semi-trasparente
-          mat.diffuseColor = new Color3(0.1, 0.1, 0.15); // Colore scuro ed elegante
+        sg.isVisible = false;
+      //   sg.receiveShadows = true;
+      //   const sgMat = sg.material as StandardMaterial;
+      //   if (sgMat) {
+      //     // Colore simile allo sfondo scena → il pavimento si mimetizza
+      //     sgMat.diffuseColor = new Color3(0.1, 0.1, 0.12);
+      //     sgMat.specularColor = new Color3(0, 0, 0);
+      //     sgMat.ambientColor = new Color3(0.1, 0.1, 0.12);
+      //     sgMat.alpha = 0.4;
+      //   }
+      }
+
+      // 3. Centra la camera sulla geometria reale del modello
+      if (loadedMeshesRef.current.length > 0) {
+        let minB = new Vector3(Infinity, Infinity, Infinity);
+        let maxB = new Vector3(-Infinity, -Infinity, -Infinity);
+        loadedMeshesRef.current.forEach(mesh => {
+          if (mesh.getTotalVertices && mesh.getTotalVertices() === 0) return;
+          if (mesh.isDisposed()) return;
+          mesh.computeWorldMatrix(true);
+          const bi = mesh.getBoundingInfo();
+          if (bi) {
+            minB = Vector3.Minimize(minB, bi.boundingBox.minimumWorld);
+            maxB = Vector3.Maximize(maxB, bi.boundingBox.maximumWorld);
+          }
+        });
+        if (minB.x !== Infinity) {
+          const center = minB.add(maxB).scale(0.5);
+          mainCam.target = center;
+          // Salva per resetCamera
+          if (modelRootRef.current) {
+            (modelRootRef.current as any)._viewCenter = center;
+          }
         }
       }
 
@@ -1920,6 +2068,21 @@ const App = () => {
     }
   }, []);
 
+  // ========== RESET CAMERA (solo 3D) ==========
+  const resetCamera = useCallback(() => {
+    const scn = sceneRef.current;
+    if (!scn) return;
+    const mainCam = scn.getCameraByName('mainCamera') as ArcRotateCamera;
+    if (!mainCam) return;
+    // Usa il centro modello calcolato in 3D setup, fallback al default
+    const storedCenter = (modelRootRef.current as any)?._viewCenter;
+    mainCam.target = storedCenter || new Vector3(0, GROUND_Y + 0.5, 0);
+    mainCam.radius = 2.5;
+    mainCam.alpha = Math.PI / 2;
+    mainCam.beta = Math.PI / 2.5;
+    log('INFO', 'Camera resettata alla posizione iniziale');
+  }, []);
+
   // ========== ROOM SCAN NAVIGATION ==========
   const openRoomScan = useCallback(() => {
     setCurrentScreen('roomscan');
@@ -1976,6 +2139,7 @@ const App = () => {
       canPlaceOnSurface={canPlaceOnSurface}
       vrFrozen={vrFrozen}
       toggleVRFreeze={toggleVRFreeze}
+      resetCamera={resetCamera}
     />
   );
 };

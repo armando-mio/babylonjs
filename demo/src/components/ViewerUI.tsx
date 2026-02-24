@@ -10,7 +10,7 @@ import {
 import {EngineView} from '@babylonjs/react-native';
 import {Camera, WebXRTrackingState, AbstractMesh, TransformNode} from '@babylonjs/core';
 import {
-  ArrowLeft, Palette, Trash2, SlidersHorizontal, Plus, X, Rotate3d, Move, Lock
+  ArrowLeft, Palette, X, Lock, RotateCcw
 } from 'lucide-react-native';
 
 import {ModelData} from '../../modelsData';
@@ -57,6 +57,7 @@ interface ViewerUIProps {
   canPlaceOnSurface: boolean;
   vrFrozen?: boolean;
   toggleVRFreeze?: () => void;
+  resetCamera?: () => void;
 }
 
 export const ViewerUI: React.FC<ViewerUIProps> = ({
@@ -96,22 +97,20 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
   canPlaceOnSurface,
   vrFrozen,
   toggleVRFreeze,
+  resetCamera,
 }) => {
   // Stato locale per evidenziare il preset attivo (per il bordo viola)
   const [activePresetIndex, setActivePresetIndex] = useState<number | null>(null);
 
-  // Logica apertura Dimensioni 
-  const handleToggleManipulator = () => {
-    if (!selectedInstance) return;
-    setShowTexturePanel(false); // Chiude Pannello Aspetto
-    setManipProperty(null); 
-    setManipProperty('scala');
-  };
-
   // Logica apertura Aspetto
   const handleToggleTexture = () => {
-    refreshMeshList();
-    setManipProperty(null); // Chiude Pannello Dimensioni
+    // In modalità 3D, usa il modello root direttamente
+    if (viewerMode === '3D' && modelRootRef.current) {
+      refreshMeshList(modelRootRef.current);
+    } else {
+      refreshMeshList();
+    }
+    setManipProperty(null);
     setShowTexturePanel((prev: boolean) => !prev);
     setActivePresetIndex(null);
   };
@@ -126,7 +125,6 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
     }
   };
 
-  const hasSelection = !!selectedInstance;
   const placementOk = viewerMode === 'VR' || canPlaceOnSurface;
 
   return (
@@ -195,7 +193,7 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
 
         {/* --- CONTROLS --- */}
         <View style={styles.controls}>
-          {/* Gruppo Sinistra: Pulsante VR Stabilize OPPURE Create Button */}
+          {/* Gruppo Sinistra: Pulsante VR Stabilize OPPURE Reset / Create Button */}
           <View style={{flexDirection: 'row', gap: 12}}>
             {xrSession && viewerMode === 'VR' && toggleVRFreeze && (
               <TouchableOpacity
@@ -208,45 +206,33 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
               </TouchableOpacity>
             )}
 
+            {viewerMode === '3D' && resetCamera && (
+              <TouchableOpacity
+                style={styles.resetCameraBtn}
+                onPress={resetCamera}>
+                <RotateCcw color="#fff" size={22} />
+              </TouchableOpacity>
+            )}
+
             {xrSession && (
               <TouchableOpacity 
                 style={[styles.createBtn, !placementOk && styles.createBtnDisabled]} 
                 onPress={createAtCenter}
                 disabled={!placementOk}>
-                <Plus color={placementOk ? "#fff" : "#666"} size={32} strokeWidth={3} />
+                <Text style={{color: placementOk ? '#fff' : '#666', fontSize: 28, fontWeight: '700'}}>+</Text>
               </TouchableOpacity>
             )}
           </View>
 
-          {/* Gruppo Destra: Strumenti */}
+          {/* Gruppo Destra: Solo Aspetto (texture/materiale) */}
           <View style={styles.actionGroup}>
-            <TouchableOpacity 
-              style={[styles.iconBtn, hasSelection && styles.iconBtnDestructive, !hasSelection && styles.iconBtnDisabled]} 
-              onPress={removeSelectedInstance}
-              disabled={!hasSelection}>
-              <Trash2 color={hasSelection ? "#ef4444" : "#888"} size={24} />
-            </TouchableOpacity>
-
             <TouchableOpacity
               style={[
                 styles.iconBtn, 
                 showTexturePanel && styles.iconBtnActive,
-                !hasSelection && styles.iconBtnDisabled
               ]}
-              onPress={handleToggleTexture}
-              disabled={!hasSelection}>
+              onPress={handleToggleTexture}>
               <Palette color={showTexturePanel ? "#3b82f6" : "#fff"} size={24} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.iconBtn,
-                (showManipulator && !!manipProperty) && styles.iconBtnActive,
-                !hasSelection && styles.iconBtnDisabled
-              ]}
-              onPress={handleToggleManipulator}
-              disabled={!hasSelection}>
-              <SlidersHorizontal color={(showManipulator && !!manipProperty) ? "#3b82f6" : "#fff"} size={24} />
             </TouchableOpacity>
           </View>
         </View>
@@ -276,7 +262,7 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
             <View style={styles.meshSelectorRow}>
               <TouchableOpacity
                 style={styles.meshNavBtn}
-                onPress={() => setSelectedMeshIdx((prev: number) => Math.max(0, prev - 1))}>
+                onPress={() => { setSelectedMeshIdx((prev: number) => Math.max(0, prev - 1)); setActivePresetIndex(null); }}>
                 <ArrowLeft color="#fff" size={16} />
               </TouchableOpacity>
               <Text style={styles.meshNameText} numberOfLines={1}>
@@ -284,7 +270,7 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
               </Text>
               <TouchableOpacity
                 style={styles.meshNavBtn}
-                onPress={() => setSelectedMeshIdx((prev: number) => Math.min(meshListForTexture.length - 1, prev + 1))}>
+                onPress={() => { setSelectedMeshIdx((prev: number) => Math.min(meshListForTexture.length - 1, prev + 1)); setActivePresetIndex(null); }}>
                 <ArrowLeft color="#fff" size={16} style={{transform: [{rotate: '180deg'}]}} />
               </TouchableOpacity>
             </View>
@@ -309,61 +295,6 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
           </View>
         )}
 
-        {showManipulator && manipProperty && modelLoaded && (
-          <View style={styles.manipulatorPanel}>
-            <TouchableOpacity style={styles.closeManipBtn} onPress={() => setManipProperty(null)}>
-              <X color="#fff" size={16} />
-            </TouchableOpacity>
-
-            <View style={styles.manipActiveRow}>
-              <TouchableOpacity
-                style={styles.manipStepBtn}
-                onPress={() => manipStep(manipProperty, -1)}>
-                <Text style={styles.manipStepBtnText}>-</Text>
-              </TouchableOpacity>
-              
-              <Text style={styles.manipActiveLabel}>
-                {(() => {
-                  const t = selectedInstanceRef.current || modelRootRef.current;
-                  if (manipProperty === 'scala') {
-                    const baseScale = (t as any)?._baseScale || 1;
-                    const pct = (((t?.scaling?.x || baseScale) / baseScale) * 100).toFixed(0);
-                    return `Scala ${pct}%`;
-                  }
-                  if (manipProperty === 'rotX')
-                    return `Rot X ${(((t?.rotation?.x || 0) * 180) / Math.PI).toFixed(0)}°`;
-                  if (manipProperty === 'rotY')
-                    return `Rot Y ${(((t?.rotation?.y || 0) * 180) / Math.PI).toFixed(0)}°`;
-                  return `Alt Y ${(t?.position?.y || 0).toFixed(2)}m`;
-                })()}
-              </Text>
-              
-              <TouchableOpacity
-                style={styles.manipStepBtn}
-                onPress={() => manipStep(manipProperty, 1)}>
-                <Text style={styles.manipStepBtnText}>+</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.manipBtnRow}>
-                <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('scala')}>
-                  <Text style={styles.manipPropBtnText}>Scala</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('rotX')}>
-                  <Text style={styles.manipPropBtnText}>Rot X</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('rotY')}>
-                  <Text style={styles.manipPropBtnText}>Rot Y</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.manipPropBtn} onPress={() => setManipProperty('posY')}>
-                  <Text style={styles.manipPropBtnText}>Alt Y</Text>
-                </TouchableOpacity>
-            </View>
-          </View>
-        )}
       </View>
     </SafeAreaView>
   );

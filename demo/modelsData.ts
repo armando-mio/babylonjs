@@ -12,18 +12,18 @@ export interface ModelData {
 export const AR_MODELS: ModelData[] = [
   {
     id: 'football_ball',
-    name: 'Football Ball',
+    name: 'Pallone da Calcio',
     fileName: 'football_ball.glb',
     thumbnail: '⚽',
-    description: '3D Football (ball)',
+    description: 'Pallone da calcio 3D',
     scale: 1.0,
   },
   {
     id: 'football_shirt_barcelona',
-    name: 'FC Barcelona Shirt',
+    name: 'Maglia FC Barcelona',
     fileName: 'football_shirt_fc_barcelona.glb',
     thumbnail: '👕',
-    description: 'FC Barcelona football shirt',
+    description: 'Maglia da calcio del FC Barcelona',
     scale: 1.0,
   },
 ];

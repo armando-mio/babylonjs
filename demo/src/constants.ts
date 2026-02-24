@@ -1,28 +1,22 @@
 import {Color3, Vector3} from '@babylonjs/core';
 import {Dimensions} from 'react-native';
 import SunCalc from 'suncalc';
-declare const process: { env: Record<string, string | undefined> };
 
 // ================= CONSTANTS =================
 export const GROUND_Y = -1.3;
 export const SELECTION_EMISSIVE = new Color3(0.3, 0.6, 1);
 export const TARGET_MODEL_SIZE = 1.0;
+
 export const {width: SCREEN_WIDTH} = Dimensions.get('window');
 export const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
 
 // ================= ROOM SCAN SERVER =================
-export const ROOM_SCAN_SERVER_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.1.xxx:3001';
+export const ROOM_SCAN_SERVER_URL = 'https://coy-unrecommendable-lupita.ngrok-free.dev';
 
 // ================= SOLAR POSITION =================
 export const SUN_SPHERE_DISTANCE = 8;
-
-export const FALLBACK_LATITUDE = process.env.EXPO_PUBLIC_FALLBACK_LATITUDE 
-  ? parseFloat(process.env.EXPO_PUBLIC_FALLBACK_LATITUDE) 
-  : 51.5072;
-
-export const FALLBACK_LONGITUDE = process.env.EXPO_PUBLIC_FALLBACK_LONGITUDE 
-  ? parseFloat(process.env.EXPO_PUBLIC_FALLBACK_LONGITUDE) 
-  : 0.1276;
+export const FALLBACK_LATITUDE = 51.5072;
+export const FALLBACK_LONGITUDE = 0.1276;
 
 export interface SunPosition {
   azimuth: number;
@@ -40,12 +34,10 @@ export function getSunPosition(lat: number, lon: number, date: Date): SunPositio
   };
 }
 
-// ================= TEXTURE PRESETS (procedural textures applied via diffuseColor + pattern) =================
+// ================= TEXTURE PRESETS =================
 export interface TexturePreset {
   label: string;
   emoji: string;
-  // Generator function creates a dynamic texture on the scene and returns it
-  // null = restore original
   type: 'restore' | 'texture';
   color1?: {r: number; g: number; b: number};
   color2?: {r: number; g: number; b: number};

@@ -12,6 +12,23 @@ import {
 import {RoomPlanView, ExportType, useRoomPlanView} from 'expo-roomplan';
 import {ROOM_SCAN_SERVER_URL} from '../constants';
 import {log} from '../logger';
+import {useDeviceId} from '../hooks/useDeviceId';
+
+// Controlla se il dispositivo ha il LiDAR
+// Solo iPhone 12 Pro+, iPad Pro M1+ hanno il LiDAR
+function checkLiDARAvailability(): boolean {
+  // Su iOS, expo-roomplan funziona solo su dispositivi con LiDAR.
+  // Se il modulo è importabile e Platform è iOS, assumiamo sia disponibile.
+  // Se la scansione fallisce, verrà gestito dall'errore.
+  if (Platform.OS !== 'ios') return false;
+  // RoomPlan API richiede iOS 16+ e LiDAR
+  try {
+    // expo-roomplan genera errore a runtime se non è disponibile
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 interface RoomScanScreenProps {
   onGoBack: () => void;
@@ -46,10 +63,12 @@ async function uploadToServer(
   scanPath: string | null,
   jsonPath: string | null,
   scanName: string,
+  deviceId?: string | null,
 ): Promise<boolean> {
   try {
     const formData = new FormData();
     formData.append('scanName', scanName);
+    if (deviceId) formData.append('deviceId', deviceId);
 
     if (scanPath) {
       const uri = normalizeFileUri(scanPath);
@@ -98,6 +117,7 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
   const [scanComplete, setScanComplete] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const deviceId = useDeviceId();
 
   // File paths ricevuti dall'export
   const scanUrlRef = useRef<string | null>(null);
@@ -221,8 +241,11 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
         savedScanPathRef.current,
         savedJsonPathRef.current,
         scanNameRef.current,
+        deviceId,
       );
-      Alert.alert('Successo', 'File inviati al server con successo!');
+      Alert.alert('Successo', 'File inviati al server con successo!', [
+        {text: 'OK', onPress: () => onGoBack()},
+      ]);
     } catch (error: any) {
       Alert.alert(
         'Errore Upload',
@@ -231,7 +254,7 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
     } finally {
       setUploading(false);
     }
-  }, []);
+  }, [onGoBack]);
 
   const handleExit = useCallback(() => {
     if (scanning) {
@@ -266,29 +289,25 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
         {/* Controlli sovrapposti */}
         <SafeAreaView style={scanStyles.overlayControls}>
           <View style={scanStyles.topBar}>
-            <TouchableOpacity
-              style={scanStyles.cancelBtn}
-              onPress={cancelScan}>
-              <Text style={scanStyles.cancelBtnText}>✕ Annulla</Text>
-            </TouchableOpacity>
-
+            <View style={{flex: 1}} />
             <View style={scanStyles.statusBadge}>
               <View style={scanStyles.recordingDot} />
               <Text style={scanStyles.statusText}>Scansione in corso</Text>
             </View>
+            <View style={{flex: 1}} />
+          </View>
+
+          <View style={scanStyles.bottomCenterButtons}>
+            <TouchableOpacity
+              style={scanStyles.cancelBtn}
+              onPress={cancelScan}>
+              <Text style={scanStyles.cancelBtnText}>Annulla</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={scanStyles.finishBtn}
               onPress={finishScan}>
-              <Text style={scanStyles.finishBtnText}>✓ Finisci</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={scanStyles.addRoomContainer}>
-            <TouchableOpacity
-              style={scanStyles.addRoomBtn}
-              onPress={controls.addRoom}>
-              <Text style={scanStyles.addRoomBtnText}>+ Aggiungi Stanza</Text>
+              <Text style={scanStyles.finishBtnText}>Finisci</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -309,43 +328,8 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
             </Text>
           </View>
 
-          {/* Info file */}
-          <View style={scanStyles.fileInfo}>
-            <Text style={scanStyles.fileInfoTitle}>File generati:</Text>
-            {savedScanPathRef.current && (
-              <View style={scanStyles.fileRow}>
-                <Text style={scanStyles.fileIcon}>📦</Text>
-                <Text style={scanStyles.fileName} numberOfLines={1}>
-                  {scanNameRef.current}.usdz
-                </Text>
-              </View>
-            )}
-            {savedJsonPathRef.current && (
-              <View style={scanStyles.fileRow}>
-                <Text style={scanStyles.fileIcon}>📄</Text>
-                <Text style={scanStyles.fileName} numberOfLines={1}>
-                  {scanNameRef.current}.json
-                </Text>
-              </View>
-            )}
-          </View>
-
           {/* Azioni */}
           <View style={scanStyles.actionButtons}>
-            <TouchableOpacity
-              style={scanStyles.saveBtn}
-              onPress={handleSave}
-              disabled={saving}>
-              {saving ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <>
-                  <Text style={scanStyles.actionIcon}>💾</Text>
-                  <Text style={scanStyles.actionBtnText}>Salva</Text>
-                </>
-              )}
-            </TouchableOpacity>
-
             <TouchableOpacity
               style={scanStyles.uploadBtn}
               onPress={handleUploadToServer}
@@ -353,26 +337,17 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
               {uploading ? (
                 <ActivityIndicator color="#fff" size="small" />
               ) : (
-                <>
-                  <Text style={scanStyles.actionIcon}>☁️</Text>
-                  <Text style={scanStyles.actionBtnText}>Invia al Server</Text>
-                </>
+                <Text style={scanStyles.actionBtnText}>Invia al Server</Text>
               )}
             </TouchableOpacity>
           </View>
 
-          {/* Pulsante Nuova Scansione / Esci */}
+          {/* Pulsante Torna alla Home */}
           <View style={scanStyles.bottomActions}>
-            <TouchableOpacity
-              style={scanStyles.newScanBtn}
-              onPress={startScan}>
-              <Text style={scanStyles.newScanBtnText}>🔄 Nuova Scansione</Text>
-            </TouchableOpacity>
-
             <TouchableOpacity
               style={scanStyles.exitBtn}
               onPress={onGoBack}>
-              <Text style={scanStyles.exitBtnText}>← Torna alla Home</Text>
+              <Text style={scanStyles.exitBtnText}>Torna alla Home</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -381,6 +356,8 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
   }
 
   // ========== RENDER: Stato iniziale ==========
+  const hasLiDAR = Platform.OS === 'ios'; // Solo dispositivi iOS supportano RoomPlan/LiDAR
+
   return (
     <SafeAreaView style={scanStyles.container}>
       <View style={scanStyles.initialContainer}>
@@ -388,14 +365,13 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
           <TouchableOpacity
             style={scanStyles.backBtn}
             onPress={handleExit}>
-            <Text style={scanStyles.backBtnText}>← Indietro</Text>
+            <Text style={scanStyles.backBtnText}>Indietro</Text>
           </TouchableOpacity>
           <Text style={scanStyles.initialTitle}>Scansione Stanza</Text>
           <View style={{width: 80}} />
         </View>
 
         <View style={scanStyles.initialContent}>
-          <Text style={scanStyles.initialIcon}>📐</Text>
           <Text style={scanStyles.initialHeading}>
             Scansiona la tua stanza
           </Text>
@@ -406,23 +382,31 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
 
           <View style={scanStyles.requirementsList}>
             <Text style={scanStyles.requirementItem}>
-              📱 iPhone/iPad con chip LiDAR
+              iPhone/iPad con chip LiDAR
             </Text>
             <Text style={scanStyles.requirementItem}>
-              💡 Buona illuminazione
+              Buona illuminazione
             </Text>
             <Text style={scanStyles.requirementItem}>
-              🔄 Muovi lentamente il dispositivo
+              Muovi lentamente il dispositivo
             </Text>
           </View>
 
-          <TouchableOpacity
-            style={scanStyles.startScanBtn}
-            onPress={startScan}>
-            <Text style={scanStyles.startScanBtnText}>
-              📷 Avvia Scansione
-            </Text>
-          </TouchableOpacity>
+          {hasLiDAR ? (
+            <TouchableOpacity
+              style={scanStyles.startScanBtn}
+              onPress={startScan}>
+              <Text style={scanStyles.startScanBtnText}>
+                Avvia Scansione
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={scanStyles.noLidarContainer}>
+              <Text style={scanStyles.noLidarText}>
+                Questo dispositivo non dispone del sensore LiDAR necessario per la scansione 3D.
+              </Text>
+            </View>
+          )}
         </View>
       </View>
     </SafeAreaView>
@@ -504,6 +488,13 @@ const scanStyles = StyleSheet.create({
     color: '#fff',
     fontWeight: '700',
     fontSize: 16,
+  },
+  bottomCenterButtons: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 16,
+    paddingBottom: 50,
   },
 
   // Risultato scansione
@@ -714,5 +705,20 @@ const scanStyles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: '800',
+  },
+  noLidarContainer: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+    alignItems: 'center',
+  },
+  noLidarText: {
+    color: '#ef4444',
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 22,
   },
 });
