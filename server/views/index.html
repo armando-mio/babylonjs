@@ -61,7 +61,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 20px;
+      color: white;
     }
     .logo h1 {
       font-size: 20px;
@@ -140,11 +140,10 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 20px;
     }
-    .stat-icon.blue { background: rgba(59, 130, 246, 0.12); }
-    .stat-icon.green { background: rgba(34, 197, 94, 0.12); }
-    .stat-icon.purple { background: rgba(168, 85, 247, 0.12); }
+    .stat-icon.blue { background: rgba(59, 130, 246, 0.12); color: var(--accent-blue); }
+    .stat-icon.green { background: rgba(34, 197, 94, 0.12); color: var(--accent-green); }
+    .stat-icon.purple { background: rgba(168, 85, 247, 0.12); color: var(--accent-purple); }
     .stat-value {
       font-size: 24px;
       font-weight: 800;
@@ -163,16 +162,23 @@
       margin: 24px auto;
       padding: 0 32px 48px;
     }
+    .section-container {
+      margin-bottom: 40px;
+    }
     .section-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
     }
     .section-title {
       font-size: 16px;
       font-weight: 700;
       color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 1px;
     }
     .grid {
       display: grid;
@@ -205,11 +211,11 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 24px;
       flex-shrink: 0;
     }
-    .card-icon.scan { background: rgba(59, 130, 246, 0.12); }
-    .card-icon.imported { background: rgba(168, 85, 247, 0.12); }
+    .card-icon.scan { background: rgba(59, 130, 246, 0.12); color: var(--accent-blue); }
+    .card-icon.imported { background: rgba(168, 85, 247, 0.12); color: var(--accent-purple); }
+    .card-icon.hardcoded { background: rgba(245, 158, 11, 0.12); color: var(--accent-amber); }
     .card-info {
       flex: 1;
       min-width: 0;
@@ -246,6 +252,11 @@
       color: var(--accent-purple);
       border: 1px solid rgba(168, 85, 247, 0.25);
     }
+    .meta-badge.hardcoded {
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--accent-amber);
+      border: 1px solid rgba(245, 158, 11, 0.25);
+    }
     .meta-text {
       font-size: 12px;
       color: var(--text-muted);
@@ -259,13 +270,10 @@
       display: flex;
       align-items: center;
       gap: 5px;
-    }
-    .detail-icon {
-      font-size: 12px;
+      color: var(--text-muted);
     }
     .detail-text {
       font-size: 12px;
-      color: var(--text-muted);
     }
     .card-actions {
       padding: 14px 20px;
@@ -307,19 +315,6 @@
       background: rgba(34, 197, 94, 0.2);
       border-color: rgba(34, 197, 94, 0.4);
     }
-    .btn-usdz {
-      background: rgba(168, 85, 247, 0.1);
-      color: var(--accent-purple);
-      border-color: rgba(168, 85, 247, 0.25);
-    }
-    .btn-usdz:hover {
-      background: rgba(168, 85, 247, 0.2);
-      border-color: rgba(168, 85, 247, 0.4);
-    }
-    .btn-usdz.loading {
-      opacity: 0.6;
-      pointer-events: none;
-    }
     .btn-delete {
       background: transparent;
       color: var(--text-muted);
@@ -338,9 +333,10 @@
       padding: 80px 32px;
     }
     .empty-icon {
-      font-size: 64px;
+      color: var(--text-muted);
       margin-bottom: 20px;
-      opacity: 0.5;
+      display: flex;
+      justify-content: center;
     }
     .empty-title {
       font-size: 20px;
@@ -354,65 +350,79 @@
       margin: 0 auto;
       line-height: 1.6;
     }
-
-    /* ===== RESPONSIVE ===== */
-    @media (max-width: 768px) {
-      .top-bar { padding: 16px 20px; }
-      .stats-bar { padding: 0 20px; flex-direction: column; }
-      .content { padding: 0 20px 48px; }
-      .grid { grid-template-columns: 1fr; }
-      .stat-card { padding: 14px 16px; }
-    }
   </style>
 </head>
 <body>
+
+  <svg style="display:none;">
+    <defs>
+      <g id="icon-cube"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline fill="none" stroke="currentColor" stroke-width="2" points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line fill="none" stroke="currentColor" stroke-width="2" x1="12" y1="22.08" x2="12" y2="12"></line></g>
+      <g id="icon-home"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" points="9 22 9 12 15 12 15 22"></polyline></g>
+      <g id="icon-folder"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></g>
+      <g id="icon-globe"><circle fill="none" stroke="currentColor" stroke-width="2" cx="12" cy="12" r="10"></circle><line fill="none" stroke="currentColor" stroke-width="2" x1="2" y1="12" x2="22" y2="12"></line><path fill="none" stroke="currentColor" stroke-width="2" d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></g>
+      <g id="icon-disk"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" points="17 21 17 13 7 13 7 21"></polyline><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" points="7 3 7 8 15 8"></polyline></g>
+      <g id="icon-file"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" points="13 2 13 9 20 9"></polyline></g>
+      <g id="icon-download"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" points="7 10 12 15 17 10"></polyline><line fill="none" stroke="currentColor" stroke-width="2" x1="12" y1="15" x2="12" y2="3"></line></g>
+      <g id="icon-eye"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle fill="none" stroke="currentColor" stroke-width="2" cx="12" cy="12" r="3"></circle></g>
+      <g id="icon-trash"><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" points="3 6 5 6 21 6"></polyline><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></g>
+      <g id="icon-refresh"><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" points="23 4 23 10 17 10"></polyline><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" points="1 20 1 14 7 14"></polyline><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></g>
+      <g id="icon-inbox"><polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline><path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></g>
+    </defs>
+  </svg>
+
   <div class="top-bar">
     <div class="top-bar-inner">
       <div class="logo">
-        <div class="logo-icon">📐</div>
+        <div class="logo-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24"><use href="#icon-cube"></use></svg>
+        </div>
         <div>
           <h1>3D Model Hub</h1>
-          <p>Scansioni RoomPlan e modelli importati</p>
+          <p>Archivio modelli suddiviso per utente</p>
         </div>
       </div>
       <div class="header-actions">
         <div class="status-dot"></div>
-        <span class="status-text">Auto-sync attivo</span>
-        <button class="refresh-btn" onclick="loadScans()">↻ Aggiorna</button>
+        <span class="status-text">Auto-sync</span>
+        <button class="refresh-btn" onclick="loadScans()">
+          <svg width="14" height="14" viewBox="0 0 24 24"><use href="#icon-refresh"></use></svg> Aggiorna
+        </button>
       </div>
     </div>
   </div>
 
   <div class="stats-bar">
     <div class="stat-card">
-      <div class="stat-icon blue">📦</div>
+      <div class="stat-icon blue">
+        <svg width="24" height="24" viewBox="0 0 24 24"><use href="#icon-cube"></use></svg>
+      </div>
       <div>
         <div class="stat-value" id="statTotal">—</div>
         <div class="stat-label">Modelli Totali</div>
       </div>
     </div>
     <div class="stat-card">
-      <div class="stat-icon green">🏠</div>
+      <div class="stat-icon green">
+        <svg width="24" height="24" viewBox="0 0 24 24"><use href="#icon-home"></use></svg>
+      </div>
       <div>
         <div class="stat-value" id="statScans">—</div>
-        <div class="stat-label">Scansioni</div>
+        <div class="stat-label">Scansioni Utenti</div>
       </div>
     </div>
     <div class="stat-card">
-      <div class="stat-icon purple">📁</div>
+      <div class="stat-icon purple">
+        <svg width="24" height="24" viewBox="0 0 24 24"><use href="#icon-folder"></use></svg>
+      </div>
       <div>
         <div class="stat-value" id="statImported">—</div>
-        <div class="stat-label">Importati</div>
+        <div class="stat-label">Importati / Globali</div>
       </div>
     </div>
   </div>
 
-  <div class="content">
-    <div class="section-header" style="margin-top: 24px;">
-      <span class="section-title" id="sectionTitle">Caricamento...</span>
+  <div id="mainContent" class="content">
     </div>
-    <div id="gridContent" class="grid"></div>
-  </div>
 
   <script>
     function formatBytes(bytes) {
@@ -440,76 +450,123 @@
         const scans = data.scans || [];
 
         // Stats
-        const scanCount = scans.filter(s => !s.source || s.source !== 'imported').length;
-        const importedCount = scans.filter(s => s.source === 'imported').length;
+        const scanCount = scans.filter(s => s.source === 'scan').length;
+        const otherCount = scans.filter(s => s.source !== 'scan').length;
         document.getElementById('statTotal').textContent = scans.length;
         document.getElementById('statScans').textContent = scanCount;
-        document.getElementById('statImported').textContent = importedCount;
+        document.getElementById('statImported').textContent = otherCount;
 
         if (scans.length === 0) {
-          document.getElementById('sectionTitle').textContent = 'Archivio Modelli';
-          document.getElementById('gridContent').innerHTML = `
-            <div class="empty-state" style="grid-column: 1 / -1;">
-              <div class="empty-icon">📭</div>
+          document.getElementById('mainContent').innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon"><svg width="64" height="64" viewBox="0 0 24 24"><use href="#icon-inbox"></use></svg></div>
               <div class="empty-title">Nessun modello presente</div>
-              <div class="empty-desc">Scansiona una stanza con LiDAR o importa un modello 3D dall'app per iniziare.</div>
+              <div class="empty-desc">Scansiona una stanza, importa un modello dall'app o aggiungine uno alla cartella hardcoded.</div>
             </div>`;
           return;
         }
 
-        document.getElementById('sectionTitle').textContent = 'Archivio Modelli (' + scans.length + ')';
+        // Raggruppa per Utente (deviceId)
+        const grouped = {};
+        scans.forEach(scan => {
+          const key = scan.deviceId === 'HARDCODED' ? 'HARDCODED' : (scan.deviceId || 'SCONOSCIUTO');
+          if (!grouped[key]) grouped[key] = [];
+          grouped[key].push(scan);
+        });
+
+        // Ordina in modo che HARDCODED sia il primo, seguito dagli altri in ordine alfabetico
+        const keys = Object.keys(grouped).sort((a, b) => {
+          if (a === 'HARDCODED') return -1;
+          if (b === 'HARDCODED') return 1;
+          return a.localeCompare(b);
+        });
 
         let html = '';
-        for (const scan of scans) {
-          const glbFile = scan.files.find(f => f.type === 'glb');
-          const usdzFile = scan.files.find(f => f.type === 'usdz');
-          const isImported = scan.source === 'imported';
-          const icon = isImported ? '📁' : '🏠';
-          const typeClass = isImported ? 'imported' : 'scan';
-          const typeLabel = isImported ? 'Importato' : 'Scansione';
-          const mainFile = glbFile || usdzFile;
-          const displayName = scan.displayName || (isImported && mainFile ? mainFile.name : scan.scanName);
-          const mainSize = mainFile ? formatBytes(mainFile.size) : '—';
-          const fileCount = scan.files.length;
-          const dateStr = formatDate(scan.timestamp);
+        for (const deviceId of keys) {
+          const groupScans = grouped[deviceId];
+          const sectionTitle = deviceId === 'HARDCODED' ? 'MODELLI HARDCODED' : `MODELLI ${deviceId}`;
 
-          html += '<div class="model-card">';
-          html += '  <div class="card-header">';
-          html += '    <div class="card-icon ' + typeClass + '">' + icon + '</div>';
-          html += '    <div class="card-info">';
-          html += '      <div class="card-name" title="' + displayName + '">' + displayName + '</div>';
-          html += '      <div class="card-meta">';
-          html += '        <span class="meta-badge ' + typeClass + '">' + typeLabel + '</span>';
-          html += '        <span class="meta-text">' + dateStr + '</span>';
-          html += '      </div>';
-          html += '    </div>';
-          html += '  </div>';
-          html += '  <div class="card-details">';
-          html += '    <div class="detail-item"><span class="detail-icon">💾</span><span class="detail-text">' + mainSize + '</span></div>';
-          html += '    <div class="detail-item"><span class="detail-icon">📄</span><span class="detail-text">' + fileCount + ' file</span></div>';
-          html += '  </div>';
-          html += '  <div class="card-actions">';
-          if (glbFile) {
-            html += '    <a class="action-btn btn-download" href="/api/scans/' + scan.scanName + '/' + glbFile.name + '" download>⬇ GLB</a>';
-            html += '    <a class="action-btn btn-viewer" href="/viewer?scan=' + scan.scanName + '&file=' + glbFile.name + '" target="_blank">👁 Viewer 3D</a>';
+          html += `
+            <div class="section-container">
+              <div class="section-header">
+                <span class="section-title">${sectionTitle} (${groupScans.length})</span>
+              </div>
+              <div class="grid">
+          `;
+
+          for (const scan of groupScans) {
+            const glbFile = scan.files.find(f => f.type === 'glb') || scan.files[0];
+            const isHardcoded = scan.isHardcoded;
+            const isImported = scan.source === 'imported';
+
+            let typeClass = 'scan';
+            let typeLabel = 'Scansione';
+            let iconId = 'icon-home';
+
+            if (isHardcoded) {
+              typeClass = 'hardcoded';
+              typeLabel = 'Globali';
+              iconId = 'icon-globe';
+            } else if (isImported) {
+              typeClass = 'imported';
+              typeLabel = 'Importato';
+              iconId = 'icon-folder';
+            }
+
+            const displayName = scan.displayName || (scan.scanName);
+            const mainSize = glbFile ? formatBytes(glbFile.size) : '—';
+            const fileCount = scan.files.length;
+            const dateStr = formatDate(scan.timestamp);
+
+            const downloadUrl = isHardcoded ? `/api/hardcoded/${glbFile.name}` : `/api/scans/${scan.scanName}/${glbFile.name}`;
+            const viewerUrl = `/viewer?${isHardcoded ? 'hardcoded=' + glbFile.name : 'scan=' + scan.scanName + '&file=' + glbFile.name}`;
+            const deleteFn = isHardcoded ? `deleteHardcoded('${glbFile.name}', '${displayName.replace(/'/g, "\\'")}')` : `deleteScan('${scan.scanName}', '${displayName.replace(/'/g, "\\'")}')`;
+
+            html += `
+              <div class="model-card">
+                <div class="card-header">
+                  <div class="card-icon ${typeClass}"><svg width="24" height="24" viewBox="0 0 24 24"><use href="#${iconId}"></use></svg></div>
+                  <div class="card-info">
+                    <div class="card-name" title="${displayName}">${displayName}</div>
+                    <div class="card-meta">
+                      <span class="meta-badge ${typeClass}">${typeLabel}</span>
+                      <span class="meta-text">${dateStr}</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="card-details">
+                  <div class="detail-item"><svg width="14" height="14" viewBox="0 0 24 24"><use href="#icon-disk"></use></svg><span class="detail-text">${mainSize}</span></div>
+                  <div class="detail-item"><svg width="14" height="14" viewBox="0 0 24 24"><use href="#icon-file"></use></svg><span class="detail-text">${fileCount} file</span></div>
+                </div>
+                <div class="card-actions">
+                  <a class="action-btn btn-download" href="${downloadUrl}" download>
+                    <svg width="14" height="14" viewBox="0 0 24 24"><use href="#icon-download"></use></svg> GLB
+                  </a>
+                  <a class="action-btn btn-viewer" href="${viewerUrl}" target="_blank">
+                    <svg width="14" height="14" viewBox="0 0 24 24"><use href="#icon-eye"></use></svg> Editor
+                  </a>
+                  <button class="action-btn btn-delete" onclick="${deleteFn}" title="Elimina">
+                    <svg width="14" height="14" viewBox="0 0 24 24"><use href="#icon-trash"></use></svg>
+                  </button>
+                </div>
+              </div>
+            `;
           }
-          if (usdzFile) {
-            html += '    <a class="action-btn btn-usdz" href="/api/scans/' + scan.scanName + '/' + usdzFile.name + '" download>⬇ USDZ</a>';
-          } else if (glbFile) {
-            html += '    <button class="action-btn btn-usdz" id="usdz-' + scan.scanName + '" onclick="convertToUsdz(\'' + scan.scanName + '\')">🔄 USDZ</button>';
-          }
-          html += '    <button class="action-btn btn-delete" onclick="deleteScan(\'' + scan.scanName + '\', \'' + displayName.replace(/'/g, "\\'") + '\')" title="Elimina">🗑</button>';
-          html += '  </div>';
-          html += '</div>';
+          html += `</div></div>`;
         }
-        document.getElementById('gridContent').innerHTML = html;
+        document.getElementById('mainContent').innerHTML = html;
       } catch (error) {
-        document.getElementById('gridContent').innerHTML = '<div class="empty-state" style="grid-column: 1 / -1;"><div class="empty-icon">⚠️</div><div class="empty-title">Errore di connessione</div><div class="empty-desc">' + error.message + '</div></div>';
+        document.getElementById('mainContent').innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon"><svg width="64" height="64" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg></div>
+            <div class="empty-title">Errore di connessione</div>
+            <div class="empty-desc">${error.message}</div>
+          </div>`;
       }
     }
 
     async function deleteScan(scanName, displayName) {
-      if (!confirm('Eliminare "' + displayName + '"?')) return;
+      if (!confirm('Eliminare il modello "' + displayName + '"?')) return;
       try {
         await fetch('/api/scans/' + scanName, { method: 'DELETE' });
         loadScans();
@@ -518,43 +575,13 @@
       }
     }
 
-    async function convertToUsdz(scanName) {
-      var btn = document.getElementById('usdz-' + scanName);
-      if (btn) { btn.classList.add('loading'); btn.textContent = '⏳ ...'; }
+    async function deleteHardcoded(fileName, displayName) {
+      if (!confirm('Eliminare il modello globale "' + displayName + '"?')) return;
       try {
-        var res = await fetch('/api/scans/' + scanName + '/convert-usdz', { method: 'POST' });
-        var data = await res.json();
-        if (data.success) {
-          loadScans(); // Ricarica per mostrare il link download USDZ
-        } else {
-          alert('Conversione fallita: ' + data.message);
-          if (btn) { btn.classList.remove('loading'); btn.textContent = '🔄 USDZ'; }
-        }
+        await fetch('/api/hardcoded/' + fileName, { method: 'DELETE' });
+        loadScans();
       } catch (e) {
-        alert('Errore: ' + e.message);
-        if (btn) { btn.classList.remove('loading'); btn.textContent = '🔄 USDZ'; }
-      }
-    }
-
-    async function convertToUsdz(scanName) {
-      const btn = document.getElementById('usdz-' + scanName);
-      if (!btn) return;
-      btn.textContent = '⏳ Conversione...';
-      btn.classList.add('loading');
-      try {
-        const res = await fetch('/api/scans/' + scanName + '/convert-usdz', { method: 'POST' });
-        const data = await res.json();
-        if (data.success) {
-          loadScans(); // Ricarica per mostrare il link di download
-        } else {
-          alert('Conversione fallita: ' + data.message);
-          btn.textContent = '🔄 USDZ';
-          btn.classList.remove('loading');
-        }
-      } catch (e) {
-        alert('Errore conversione: ' + e.message);
-        btn.textContent = '🔄 USDZ';
-        btn.classList.remove('loading');
+        alert('Errore durante eliminazione: ' + e.message);
       }
     }
 

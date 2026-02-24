@@ -53,6 +53,9 @@
       font-weight: 600;
       border: 1px solid var(--border);
       transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
     .back-btn:hover { background: var(--bg); border-color: var(--border-light); color: var(--text); }
     h2 { font-size: 16px; font-weight: 700; }
@@ -66,6 +69,9 @@
       font-size: 13px;
       font-weight: 700;
       transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
     .toggle-panel-btn:hover {
       background: rgba(168, 85, 247, 0.2);
@@ -231,7 +237,12 @@
     }
     .preset-btn:hover { border-color: var(--border-light); transform: translateY(-1px); }
     .preset-btn.active { border-color: var(--purple); background: rgba(168, 85, 247, 0.08); }
-    .preset-icon { font-size: 22px; margin-bottom: 4px; }
+    .preset-icon { 
+      width: 22px; height: 22px; 
+      border-radius: 50%; 
+      margin: 0 auto 6px auto;
+      border: 1px solid var(--border);
+    }
     .preset-name { font-size: 10px; font-weight: 600; color: var(--text-sec); }
 
     /* RESET */
@@ -246,6 +257,10 @@
       font-size: 13px;
       font-weight: 700;
       transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
     }
     .reset-btn:hover { background: rgba(239, 68, 68, 0.15); }
 
@@ -270,10 +285,16 @@
 <body>
   <header>
     <div class="header-left">
-      <a href="/" class="back-btn">← Dashboard</a>
+      <a href="/" class="back-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg> 
+        Dashboard
+      </a>
       <h2 id="model-title">Caricamento...</h2>
     </div>
-    <button class="toggle-panel-btn" id="toggleBtn" onclick="togglePanel()">🎨 Materiali</button>
+    <button class="toggle-panel-btn" id="toggleBtn" onclick="togglePanel()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r=".5"></circle><circle cx="17.5" cy="10.5" r=".5"></circle><circle cx="8.5" cy="7.5" r=".5"></circle><circle cx="6.5" cy="12.5" r=".5"></circle><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10c1.66 0 3-1.34 3-3 0-.35-.07-.69-.2-.1-.08-.23-.13-.48-.13-.75 0-1.1.9-2 2-2h3c2.21 0 4-1.79 4-4 0-3.86-3.59-7-8-7z"></path></svg> 
+      Materiali
+    </button>
   </header>
 
   <div class="main">
@@ -287,7 +308,6 @@
     ></model-viewer>
 
     <div class="side-panel hidden" id="panel">
-      <!-- MATERIALI -->
       <div class="panel-section">
         <div class="panel-title">Materiali</div>
         <div class="mat-list" id="matList">
@@ -295,7 +315,6 @@
         </div>
       </div>
 
-      <!-- COLORE -->
       <div class="panel-section">
         <div class="panel-title">Colore Base</div>
         <div class="color-section">
@@ -308,7 +327,6 @@
         </div>
       </div>
 
-      <!-- PROPRIETÀ PBR -->
       <div class="panel-section">
         <div class="panel-title">Proprietà PBR</div>
         <div class="slider-group">
@@ -327,15 +345,16 @@
         </div>
       </div>
 
-      <!-- PRESET -->
       <div class="panel-section">
         <div class="panel-title">Preset Materiali</div>
         <div class="preset-grid" id="presetGrid"></div>
       </div>
 
-      <!-- RESET -->
       <div class="panel-section">
-        <button class="reset-btn" onclick="resetMaterials()">↺ Ripristina Originali</button>
+        <button class="reset-btn" onclick="resetMaterials()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg> 
+          Ripristina Originali
+        </button>
       </div>
     </div>
   </div>
@@ -344,26 +363,29 @@
     const viewer = document.getElementById('viewer');
     const params = new URLSearchParams(window.location.search);
 
-    // Carica modello
+    // Carica modello normale o hardcoded
     if (params.get('scan') && params.get('file')) {
       document.getElementById('model-title').textContent = params.get('file');
       viewer.src = '/api/scans/' + params.get('scan') + '/' + params.get('file');
+    } else if (params.get('hardcoded')) {
+      document.getElementById('model-title').textContent = params.get('hardcoded');
+      viewer.src = '/api/hardcoded/' + params.get('hardcoded');
     }
 
     let selectedMatIndex = 0;
-    let originalMaterials = []; // Salva stato originale
+    let originalMaterials = [];
 
-    // Preset materiali
+    // Preset materiali 
     const PRESETS = [
-      { icon: '⬜', name: 'Bianco',   color: [1, 1, 1],       metal: 0,   rough: 0.8 },
-      { icon: '⬛', name: 'Nero',     color: [0.05, 0.05, 0.05], metal: 0, rough: 0.7 },
-      { icon: '🔴', name: 'Rosso',    color: [0.85, 0.1, 0.1], metal: 0,   rough: 0.6 },
-      { icon: '🟡', name: 'Oro',      color: [1, 0.84, 0],     metal: 1,   rough: 0.3 },
-      { icon: '🩶', name: 'Chrome',   color: [0.8, 0.8, 0.82], metal: 1,   rough: 0.05 },
-      { icon: '🟤', name: 'Legno',    color: [0.55, 0.35, 0.18], metal: 0, rough: 0.85 },
-      { icon: '🪨', name: 'Pietra',   color: [0.6, 0.58, 0.55], metal: 0,  rough: 0.95 },
-      { icon: '🧊', name: 'Vetro',    color: [0.9, 0.95, 1],   metal: 0,   rough: 0.05 },
-      { icon: '🟠', name: 'Rame',     color: [0.85, 0.5, 0.3], metal: 1,   rough: 0.25 },
+      { name: 'Bianco',   color: [1, 1, 1],       metal: 0,   rough: 0.8 },
+      { name: 'Nero',     color: [0.05, 0.05, 0.05], metal: 0, rough: 0.7 },
+      { name: 'Rosso',    color: [0.85, 0.1, 0.1], metal: 0,   rough: 0.6 },
+      { name: 'Oro',      color: [1, 0.84, 0],     metal: 1,   rough: 0.3 },
+      { name: 'Chrome',   color: [0.8, 0.8, 0.82], metal: 1,   rough: 0.05 },
+      { name: 'Legno',    color: [0.55, 0.35, 0.18], metal: 0, rough: 0.85 },
+      { name: 'Pietra',   color: [0.6, 0.58, 0.55], metal: 0,  rough: 0.95 },
+      { name: 'Vetro',    color: [0.9, 0.95, 1],   metal: 0,   rough: 0.05 },
+      { name: 'Rame',     color: [0.85, 0.5, 0.3], metal: 1,   rough: 0.25 },
     ];
 
     // Render preset buttons
@@ -371,7 +393,8 @@
     PRESETS.forEach((p, i) => {
       const btn = document.createElement('button');
       btn.className = 'preset-btn';
-      btn.innerHTML = '<div class="preset-icon">' + p.icon + '</div><div class="preset-name">' + p.name + '</div>';
+      const rgbColor = `rgb(${p.color[0]*255},${p.color[1]*255},${p.color[2]*255})`;
+      btn.innerHTML = `<div class="preset-icon" style="background-color: ${rgbColor}"></div><div class="preset-name">${p.name}</div>`;
       btn.onclick = () => applyPreset(i);
       presetGrid.appendChild(btn);
     });
@@ -388,7 +411,6 @@
       return [r, g, b];
     }
 
-    // Quando il modello è pronto
     viewer.addEventListener('load', () => {
       const model = viewer.model;
       if (!model || !model.materials || model.materials.length === 0) {
@@ -396,7 +418,6 @@
         return;
       }
 
-      // Salva stato originale
       originalMaterials = model.materials.map(mat => {
         const pbr = mat.pbrMetallicRoughness;
         const baseColor = pbr.baseColorFactor;
@@ -446,7 +467,6 @@
       renderMaterialList();
     }
 
-    // Global handlers
     window.onColorChange = function(hex) {
       const [r, g, b] = hexToRgb(hex);
       const mat = viewer.model.materials[selectedMatIndex];
@@ -483,7 +503,6 @@
       mat.pbrMetallicRoughness.setMetallicFactor(p.metal);
       mat.pbrMetallicRoughness.setRoughnessFactor(p.rough);
 
-      // Update UI
       const hex = rgbToHex(p.color[0], p.color[1], p.color[2]);
       document.getElementById('colorPicker').value = hex;
       document.getElementById('colorHex').value = hex.toUpperCase();
@@ -493,7 +512,6 @@
       document.getElementById('roughVal').textContent = p.rough.toFixed(2);
       renderMaterialList();
 
-      // Highlight preset btn
       document.querySelectorAll('.preset-btn').forEach((btn, i) => {
         btn.classList.toggle('active', i === presetIndex);
       });
