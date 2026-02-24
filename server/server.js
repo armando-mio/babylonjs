@@ -347,21 +347,6 @@ app.post('/api/upload-model', modelUpload.single('modelFile'), async (req, res) 
       };
       fs.writeFileSync(path.join(scanDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
 
-      // Pipeline automatica: genera anche USDZ dal GLB importato (in background)
-      if (isGlb) {
-        const usdzFileName = fileName.replace(/\.glb$/i, '.usdz');
-        const usdzPath = path.join(scanDir, usdzFileName);
-        const scriptPath = path.join(__dirname, 'glb_to_usdz.swift');
-        exec(`swift "${scriptPath}" "${finalPath}" "${usdzPath}"`, (convErr, stdout, stderr) => {
-          if (convErr) {
-            console.log(`⚠️ Conversione automatica GLB→USDZ fallita per ${fileName}: ${convErr.message}`);
-            if (stderr) console.log(`  stderr: ${stderr}`);
-          } else if (fs.existsSync(usdzPath)) {
-            console.log(`✅ Pipeline: USDZ generato automaticamente → ${usdzFileName}`);
-          }
-        });
-      }
-
       res.json({
         success: true,
         glbReady: true,
@@ -380,41 +365,6 @@ app.post('/api/upload-model', modelUpload.single('modelFile'), async (req, res) 
 // ========== FRONTEND (DASHBOARD E VIEWER) ==========
 
 // ========== CONVERSIONE GLB → USDZ ==========
-app.post('/api/scans/:scanName/convert-usdz', async (req, res) => {
-  const dirPath = path.join(UPLOADS_DIR, req.params.scanName);
-  if (!fs.existsSync(dirPath)) return res.status(404).json({success: false, message: 'Scansione non trovata'});
-
-  // Cerca il file GLB nella directory
-  const files = fs.readdirSync(dirPath);
-  const glbFile = files.find(f => f.toLowerCase().endsWith('.glb'));
-  if (!glbFile) return res.status(404).json({success: false, message: 'Nessun file GLB trovato'});
-
-  const glbPath = path.join(dirPath, glbFile);
-  const usdzFileName = glbFile.replace(/\.glb$/i, '.usdz');
-  const usdzPath = path.join(dirPath, usdzFileName);
-
-  // Se esiste già il USDZ, restituiscilo direttamente
-  if (fs.existsSync(usdzPath)) {
-    return res.json({success: true, message: 'USDZ già disponibile', fileName: usdzFileName, url: `/api/scans/${req.params.scanName}/${usdzFileName}`});
-  }
-
-  try {
-    console.log(`🔄 Conversione GLB → USDZ per: ${glbFile}`);
-    const scriptPath = path.join(__dirname, 'glb_to_usdz.swift');
-    await execPromise(`swift "${scriptPath}" "${glbPath}" "${usdzPath}"`);
-    
-    if (fs.existsSync(usdzPath)) {
-      console.log(`✅ USDZ generato: ${usdzFileName}`);
-      res.json({success: true, message: 'Conversione completata', fileName: usdzFileName, url: `/api/scans/${req.params.scanName}/${usdzFileName}`});
-    } else {
-      res.status(500).json({success: false, message: 'Conversione fallita: file non generato'});
-    }
-  } catch (error) {
-    console.error('❌ Errore conversione GLB→USDZ:', error.message);
-    res.status(500).json({success: false, message: `Errore conversione: ${error.message}`});
-  }
-});
-
 app.get('/viewer', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'viewer.html'));
 });

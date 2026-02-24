@@ -5,12 +5,13 @@ import {
   Text,
   TouchableOpacity,
   ActivityIndicator,
-  ScrollView
+  ScrollView,
+  Alert,
 } from 'react-native';
 import {EngineView} from '@babylonjs/react-native';
 import {Camera, WebXRTrackingState, AbstractMesh, TransformNode} from '@babylonjs/core';
 import {
-  ArrowLeft, Palette, X, Lock, RotateCcw
+  ArrowLeft, Palette, X, Lock, RotateCcw, Trash2
 } from 'lucide-react-native';
 
 import {ModelData} from '../../modelsData';
@@ -104,12 +105,14 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
 
   // Logica apertura Aspetto
   const handleToggleTexture = () => {
-    // In modalità 3D, usa il modello root direttamente
-    if (viewerMode === '3D' && modelRootRef.current) {
-      refreshMeshList(modelRootRef.current);
-    } else {
-      refreshMeshList();
+    // Require a selected instance before allowing texture/material edits
+    if (!selectedInstance) {
+      Alert.alert('Nessuna selezione', 'Seleziona prima un oggetto per modificare texture o materiale.');
+      return;
     }
+
+    // Refresh mesh list for the selected instance only
+    refreshMeshList(selectedInstance as any);
     setManipProperty(null);
     setShowTexturePanel((prev: boolean) => !prev);
     setActivePresetIndex(null);
@@ -230,10 +233,30 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
               style={[
                 styles.iconBtn, 
                 showTexturePanel && styles.iconBtnActive,
+                !selectedInstance && styles.iconBtnDisabled,
               ]}
-              onPress={handleToggleTexture}>
-              <Palette color={showTexturePanel ? "#3b82f6" : "#fff"} size={24} />
+              onPress={handleToggleTexture}
+              disabled={!selectedInstance}>
+              <Palette color={showTexturePanel ? "#3b82f6" : (selectedInstance ? "#fff" : "#71717a")} size={24} />
             </TouchableOpacity>
+
+            {/* Delete selected instance - visible only when an instance is selected */}
+            {selectedInstance && (viewerMode === 'AR' || viewerMode === 'VR') && (
+              <TouchableOpacity
+                style={[styles.iconBtn, styles.iconBtnDestructive]}
+                onPress={() => {
+                  Alert.alert(
+                    'Elimina oggetto',
+                    "Sei sicuro di voler eliminare l'oggetto selezionato?",
+                    [
+                      {text: 'Annulla', style: 'cancel'},
+                      {text: 'Elimina', style: 'destructive', onPress: () => removeSelectedInstance()},
+                    ],
+                  );
+                }}>
+                <Trash2 color="#fff" size={22} />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
