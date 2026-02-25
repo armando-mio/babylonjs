@@ -520,7 +520,13 @@
 
             const downloadUrl = isHardcoded ? `/api/hardcoded/${glbFile.name}` : `/api/scans/${scan.scanName}/${glbFile.name}`;
             const viewerUrl = `/viewer?${isHardcoded ? 'hardcoded=' + glbFile.name : 'scan=' + scan.scanName + '&file=' + glbFile.name}`;
-            const deleteFn = isHardcoded ? `deleteHardcoded('${glbFile.name}', '${displayName.replace(/'/g, "\\'")}')` : `deleteScan('${scan.scanName}', '${displayName.replace(/'/g, "\\'")}')`;
+
+            // Creiamo il bottone di eliminazione SOLO se il modello NON è hardcoded
+            const deleteButtonHtml = isHardcoded ? '' : `
+              <button class="action-btn btn-delete" onclick="deleteScan('${scan.scanName}', '${displayName.replace(/'/g, "\\'")}')" title="Elimina">
+                <svg width="14" height="14" viewBox="0 0 24 24"><use href="#icon-trash"></use></svg>
+              </button>
+            `;
 
             html += `
               <div class="model-card">
@@ -545,9 +551,7 @@
                   <a class="action-btn btn-viewer" href="${viewerUrl}" target="_blank">
                     <svg width="14" height="14" viewBox="0 0 24 24"><use href="#icon-eye"></use></svg> Editor
                   </a>
-                  <button class="action-btn btn-delete" onclick="${deleteFn}" title="Elimina">
-                    <svg width="14" height="14" viewBox="0 0 24 24"><use href="#icon-trash"></use></svg>
-                  </button>
+                  ${deleteButtonHtml}
                 </div>
               </div>
             `;

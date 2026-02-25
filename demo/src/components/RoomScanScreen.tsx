@@ -159,16 +159,23 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
         log('INFO', `JSON salvato in: ${cleanPath(jsonUrl)}`);
       }
 
-      setScanComplete(true);
-      setScanning(false);
-      log('INFO', 'Scansione completata ed esportata con successo');
+      log('INFO', 'Scansione completata. Spegnimento sensori...');
+      
+      // FIX ARKit CRASH: Diamo tempo al sistema di spegnere l'ARSession
+      setTimeout(() => {
+        setScanComplete(true);
+        setScanning(false);
+      }, 800);
     },
   });
 
   // Quando lo stato cambia a terminal (OK, Error, Canceled) e non scanning
   useEffect(() => {
     if (state.status === 'Canceled' && scanning) {
-      setScanning(false);
+      // FIX ARKit CRASH
+      setTimeout(() => {
+        setScanning(false);
+      }, 800);
     }
   }, [state.status, scanning]);
 
@@ -180,14 +187,23 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
     savedScanPathRef.current = null;
     savedJsonPathRef.current = null;
     setScanComplete(false);
+    
+    // 1. Mostriamo la View (accensione fotocamera)
     setScanning(true);
-    controls.start();
+    
+    // 2. Aspettiamo che la grafica sia pronta prima di avviare il motore di scansione
+    setTimeout(() => {
+      controls.start();
+    }, 500); // Mezzo secondo di respiro
   }, [controls]);
 
   const cancelScan = useCallback(() => {
     controls.cancel();
-    setScanning(false);
-    setScanComplete(false);
+    // FIX ARKit CRASH
+    setTimeout(() => {
+      setScanning(false);
+      setScanComplete(false);
+    }, 800);
   }, [controls]);
 
   const finishScan = useCallback(() => {
@@ -254,7 +270,7 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
     } finally {
       setUploading(false);
     }
-  }, [onGoBack]);
+  }, [onGoBack, deviceId]);
 
   const handleExit = useCallback(() => {
     if (scanning) {
@@ -268,9 +284,12 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
             style: 'destructive',
             onPress: () => {
               controls.cancel();
-              setScanning(false);
-              setScanComplete(false);
-              onGoBack();
+              // FIX ARKit CRASH
+              setTimeout(() => {
+                setScanning(false);
+                setScanComplete(false);
+                onGoBack();
+              }, 800);
             },
           },
         ],

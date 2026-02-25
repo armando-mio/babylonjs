@@ -5,13 +5,12 @@ import {
   Color4,
   MeshBuilder,
   StandardMaterial,
-  ShadowGenerator,
   Mesh,
 } from '@babylonjs/core';
 import {log} from '../logger';
 import {GROUND_Y} from '../constants';
 
-export function createVRWorld(scene: Scene, shadowGen: ShadowGenerator | null): Mesh {
+export function createVRWorld(scene: Scene): Mesh {
   // Sky background
   scene.clearColor = new Color4(0.45, 0.7, 0.95, 1);
 
@@ -81,7 +80,6 @@ export function createVRWorld(scene: Scene, shadowGen: ShadowGenerator | null): 
     mountain.material = mMat;
     mountain.isPickable = false;
     mountain.renderingGroupId = 1;
-    if (shadowGen) shadowGen.addShadowCaster(mountain);
   });
 
   // Trees
@@ -109,10 +107,6 @@ export function createVRWorld(scene: Scene, shadowGen: ShadowGenerator | null): 
     crown.material = crownMat;
     crown.isPickable = false;
     crown.renderingGroupId = 1;
-    if (shadowGen) {
-      shadowGen.addShadowCaster(trunk);
-      shadowGen.addShadowCaster(crown);
-    }
   });
 
   // Clouds

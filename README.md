@@ -37,9 +37,6 @@ The application logic is located in the `demo` directory. To run the app:
     ```
 
 HOW TO BUILD IN XCODE (for iOS): 
-- In demo/node_modules/react-native/third-party-podspecs/boost.podspec change url into 'https://archives.boost.io/release/...'
-- In XCODE > Pods (blue icon) > TARGETS > React-Core > Change iOS version to '17.0'
-- In XCODE > Pods (blue icon) > TARGETS > react-native-compass-heading > Change iOS version to '17.0'
 - Activate Metro Server in terminal (only if you are in debug mode, otherwise it starts by itself):
     ```bash
     cd demo
@@ -51,10 +48,10 @@ HOW TO BUILD IN XCODE (for iOS):
 HOW TO REBUILD IN XCODE (for iOS):
 - Execute these commands in demo/ios
     ```bash
-    rm -rf ~/Library/Developer/Xcode/DerivedData/* // type 'y' when you are asked
-    rm -rf Pods
-    rm Podfile.lock
-    bundle exec pod install
+    rm -rf Pods Podfile.lock build ~/Library/Developer/Xcode/DerivedData/*
+    // type 'y' when prompted
+
+    bundle exec pod install   
     ```
 
 HOW TO CONNECT TO THE SERVER:

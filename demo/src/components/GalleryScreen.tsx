@@ -89,11 +89,14 @@ export const GalleryScreen: React.FC<GalleryScreenProps> = ({onOpenModel, onOpen
               id: scan.scanName,
               name: scan.displayName || defaultName,
               fileName: glbFile.name,
-              thumbnail: isImported ? '📁' : '🏠',
+              thumbnail: scan.isHardcoded ? '🌐' : (isImported ? '📁' : '🏠'),
               description: scan.description || defaultDesc,
               scale: 1.0,
-              // Crea l'URL completo per far scaricare il file a BabylonJS
-              url: `${ROOM_SCAN_SERVER_URL}/api/scans/${scan.scanName}/${glbFile.name}`,
+              // URL corretto a seconda se è hardcoded o scansione
+              url: scan.isHardcoded 
+                ? `${ROOM_SCAN_SERVER_URL}/api/hardcoded/${glbFile.name}`
+                : `${ROOM_SCAN_SERVER_URL}/api/scans/${scan.scanName}/${glbFile.name}`,
+              isHardcoded: scan.isHardcoded, // Passiamo il flag dal server
             });
           }
         });
@@ -232,7 +235,7 @@ export const GalleryScreen: React.FC<GalleryScreenProps> = ({onOpenModel, onOpen
     setServerModels(prev => updateModel(prev));
 
     // Salva sul server se è un modello server (non hardcoded)
-    if (!AR_MODELS.some(m => m.id === editingModel.id)) {
+    if (!editingModel.isHardcoded) {
       fetch(`${ROOM_SCAN_SERVER_URL}/api/scans/${editingModel.id}`, {
         method: 'PATCH',
         headers: {
@@ -304,14 +307,17 @@ export const GalleryScreen: React.FC<GalleryScreenProps> = ({onOpenModel, onOpen
                   </Text>
                 </View>
 
-                <TouchableOpacity 
-                  style={styles.editModelBtn}
-                  onPress={() => openEditModal(item)}>
-                  <Pencil color="#a1a1aa" size={18} />
-                </TouchableOpacity>
+                {/* Pulsante Modifica — solo se il modello NON è hardcoded */}
+                {!item.isHardcoded && (
+                  <TouchableOpacity 
+                    style={styles.editModelBtn}
+                    onPress={() => openEditModal(item)}>
+                    <Pencil color="#a1a1aa" size={18} />
+                  </TouchableOpacity>
+                )}
 
-                {/* Pulsante Elimina — solo per modelli locali e server (non hardcoded) */}
-                {!AR_MODELS.some(m => m.id === item.id) && (
+                {/* Pulsante Elimina — solo se il modello NON è hardcoded */}
+                {!item.isHardcoded && (
                   <TouchableOpacity 
                     style={[styles.editModelBtn, {marginLeft: 4}]}
                     onPress={() => handleDeleteModel(item)}>

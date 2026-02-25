@@ -87,6 +87,7 @@ const App = () => {
   const [sceneReady, setSceneReady] = useState(false);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [loadingModel, setLoadingModel] = useState(false);
+  const [isPlacing, setIsPlacing] = useState(false);
 
   // Interaction state
   const [selectedInstance, setSelectedInstance] = useState<AbstractMesh | null>(null);
@@ -207,8 +208,54 @@ const App = () => {
       return;
     }
     placingRef.current = true;
+    setIsPlacing(true);
     const instName = `placed_${Date.now()}`;
     log('INFO', `Piazzamento ${model.name} a (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
+
+    // ── 3-D loading indicator at the exact placement position ──────────────
+    // Two concentric torus rings, one tilted 45°, both spinning in opposite
+    // directions. Fully emissive so they are visible in both AR and VR.
+    const loadT = {v: 0};
+
+    const ringA = MeshBuilder.CreateTorus(
+      '_placeRingA',
+      {diameter: 0.28, thickness: 0.022, tessellation: 32},
+      scn,
+    );
+    ringA.position.set(position.x, position.y + 0.14, position.z);
+    ringA.renderingGroupId = 1;
+    ringA.isPickable = false;
+    const matA = new StandardMaterial('_placeMatA', scn);
+    matA.emissiveColor = new Color3(0.13, 0.9, 0.4);
+    matA.disableLighting = true;
+    ringA.material = matA;
+
+    const ringB = MeshBuilder.CreateTorus(
+      '_placeRingB',
+      {diameter: 0.46, thickness: 0.014, tessellation: 32},
+      scn,
+    );
+    ringB.position.set(position.x, position.y + 0.14, position.z);
+    ringB.rotation.x = Math.PI / 4;       // tilt for depth cue
+    ringB.renderingGroupId = 1;
+    ringB.isPickable = false;
+    const matB = new StandardMaterial('_placeMatB', scn);
+    matB.emissiveColor = new Color3(0.13, 0.9, 0.4);
+    matB.alpha = 0.55;
+    matB.disableLighting = true;
+    ringB.material = matB;
+
+    const spinObserver = scn.onBeforeRenderObservable.add(() => {
+      if (scn.isDisposed) return;
+      loadT.v += 0.06;
+      ringA.rotation.y =  loadT.v;
+      ringB.rotation.y = -loadT.v * 0.75;
+      // gentle scale pulse on inner ring
+      const pulse = 1 + 0.07 * Math.sin(loadT.v * 4);
+      ringA.scaling.setAll(pulse);
+    });
+    // ───────────────────────────────────────────────────────────────────────
+
     try {
       const instRoot = new TransformNode(instName, scn);
       instRoot.position = Vector3.Zero();
@@ -306,7 +353,12 @@ const App = () => {
       log('ERROR', `Errore piazzamento: ${err.message}`);
       setStatus(`Errore piazzamento: ${err.message}`);
     } finally {
+      // Remove the 3-D loading indicator
+      if (spinObserver) scn.onBeforeRenderObservable.remove(spinObserver);
+      try { ringA.dispose(); } catch (_) {}
+      try { ringB.dispose(); } catch (_) {}
       placingRef.current = false;
+      setIsPlacing(false);
     }
   }, [selectInstance]);
 
@@ -1143,25 +1195,88 @@ const App = () => {
         // Configure rendering groups for VR
         configureVRRendering(scene);
 
-        // Widen shadow map coverage for VR world (large area with mountains/trees)
-        if (dirLightRef.current) {
-          dirLightRef.current.shadowMinZ = 0.1;
-          dirLightRef.current.shadowMaxZ = 80;
-          dirLightRef.current.autoUpdateExtends = true;
-          dirLightRef.current.autoCalcShadowZBounds = true;
-        }
-        if (shadowGenRef.current) {
-          // Increase shadow quality for VR's larger scene
-          shadowGenRef.current.useBlurExponentialShadowMap = true;
-          shadowGenRef.current.blurKernel = 32;
-          shadowGenRef.current.depthScale = 100;
-          shadowGenRef.current.frustumEdgeFalloff = 1.0;
-          shadowGenRef.current.transparencyShadow = true;
-        }
-
         // Create VR world (sky, mountains, trees, clouds)
-        const vrGridPlane = createVRWorld(scene, shadowGenRef.current);
+        const vrGridPlane = createVRWorld(scene);
         groundPlaneRef.current = vrGridPlane;
+
+        // ─── VR Shadow System ─────────────────────────────────────────────────
+        // All shadow creation and registration happens here so it is centralised
+        // and easy to reason about. The ShadowGenerator is shared with AR mode
+        // but re-configured for the larger, performance-sensitive VR scene.
+        {
+          const sg = shadowGenRef.current;
+
+          // 1. Re-optimise the generator for VR:
+          //    • 1024 map  – half of AR 2048, lower GPU cost, sustained 60 fps.
+          //    • PCF QUALITY_LOW – hardware Percentage-Closer Filtering. Unlike
+          //      Poisson (single-tap), PCF averages multiple depth samples so
+          //      thin / flat objects still produce a correct, smooth shadow
+          //      without acne or gaps on narrow geometry.
+          //    • Very small bias – prevents self-shadowing on thin meshes while
+          //      keeping shadow contact with the geometry tight.
+          if (sg) {
+            sg.mapSize                       = 1024;
+            sg.usePercentageCloserFiltering  = true;           // PCF hardware filter
+            sg.filteringQuality              = ShadowGenerator.QUALITY_LOW;  // 4-tap PCF, VR-safe
+            sg.useBlurExponentialShadowMap   = false;
+            sg.useExponentialShadowMap       = false;
+            sg.usePoissonSampling            = false;
+            sg.useKernelBlur                 = false;
+            sg.bias                          = 0.0005;   // tight – avoids gaps on thin meshes
+            sg.normalBias                    = 0.02;     // compensates normals, not geometry offset
+            sg.darkness                      = 0.5;
+            sg.frustumEdgeFalloff            = 0.1;
+            sg.transparencyShadow            = true;
+          }
+
+          // 2. Light frustum – wide enough to cover the VR environment (+100 m).
+          if (dirLightRef.current) {
+            dirLightRef.current.shadowMinZ          = 0.1;
+            dirLightRef.current.shadowMaxZ          = 100;
+            dirLightRef.current.autoUpdateExtends   = true;
+            dirLightRef.current.autoCalcShadowZBounds = true;
+          }
+
+          // 3. Ground meshes receive shadows.
+          ['shadowGround', 'arGrid'].forEach(name => {
+            const m = scene.getMeshByName(name);
+            if (m) m.receiveShadows = true;
+          });
+
+          // 4. Register every VR environment object as a shadow caster so that
+          //    mountains and trees cast sun-driven shadows on the ground.
+          if (sg) {
+            scene.meshes.forEach(m => {
+              if (
+                m instanceof Mesh &&
+                (m.name.startsWith('vrMountain_') ||
+                 m.name.startsWith('vrTrunk_')    ||
+                 m.name.startsWith('vrCrown_'))
+              ) {
+                sg.addShadowCaster(m, true); // includeDescendants = true
+                m.receiveShadows = true;
+              }
+            });
+
+            // 5. Register any model that was already loaded before VR started
+            //    (preview + placed instances) so it casts shadows immediately.
+            const preVRRoots: TransformNode[] = [
+              ...(modelRootRef.current ? [modelRootRef.current] : []),
+              ...placedInstancesRef.current,
+            ];
+            preVRRoots.forEach(root => {
+              root.getChildMeshes().forEach(m => {
+                if (m instanceof Mesh) {
+                  sg.addShadowCaster(m, true);
+                  m.receiveShadows = true;
+                }
+              });
+            });
+          }
+
+          log('INFO', 'VR: shadow system init — 1024px Poisson, sun-driven directional light');
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         surfaceDetectedRef.current = true;
         setSurfaceDetected(true);
@@ -1475,18 +1590,26 @@ const App = () => {
             }
 
             if (!projected) {
-              // ── Fallback 3 (ALWAYS MOVE): project at fixed distance in front of camera ──
-              // This ensures the reticle NEVER freezes even if no surface is known.
+              // ── Fallback 3: Nessuna superficie rilevata ──
+              // Se conosciamo l'altezza del pavimento (arFloorY), proiettiamo il reticolo LÌ
+              // invece di farlo volare a mezz'aria in modo innaturale.
               const forward2D = new Vector3(camForward.x, 0, camForward.z);
               const forward2DLen = Math.sqrt(forward2D.x * forward2D.x + forward2D.z * forward2D.z);
-              if (forward2DLen > 0.001) {
+              
+              if (forward2DLen > 0.001 && Number.isFinite(arFloorYRef.current)) {
                 forward2D.scaleInPlace(1 / forward2DLen);
-                const groundY = Number.isFinite(arFloorYRef.current) ? arFloorYRef.current : camPos.y - 1.2;
+                // Usa rigorosamente l'Y del pavimento
+                const floorY = arFloorYRef.current;
                 const projX = camPos.x + forward2D.x * RETICLE_FALLBACK_DIST;
                 const projZ = camPos.z + forward2D.z * RETICLE_FALLBACK_DIST;
-                reticleTargetPosRef.current = new Vector3(projX, groundY + 0.02, projZ);
+                reticleTargetPosRef.current = new Vector3(projX, floorY + 0.02, projZ);
                 hitTestMarkerRef.current.isVisible = true;
-                lastHitPosRef.current = new Vector3(projX, groundY, projZ);
+                lastHitPosRef.current = new Vector3(projX, floorY, projZ);
+              } else {
+                // Se non abbiamo ancora MAI visto un pavimento, nascondiamo il reticolo
+                // per indicare all'utente di continuare a muovere il telefono.
+                if (hitTestMarkerRef.current) hitTestMarkerRef.current.isVisible = false;
+                lastHitPosRef.current = null;
               }
             }
           }
@@ -2109,6 +2232,7 @@ const App = () => {
       status={status}
       trackingState={trackingState}
       loadingModel={loadingModel}
+      isPlacing={isPlacing}
       modelLoaded={modelLoaded}
       sceneReady={sceneReady}
       surfaceDetected={surfaceDetected}

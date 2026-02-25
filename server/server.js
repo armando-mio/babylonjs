@@ -276,13 +276,6 @@ app.get('/api/hardcoded/:fileName', (req, res) => {
   res.download(filePath);
 });
 
-// Eliminazione Modelli Hardcoded
-app.delete('/api/hardcoded/:fileName', (req, res) => {
-  const filePath = path.join(HARDCODED_DIR, req.params.fileName);
-  if (!fs.existsSync(filePath)) return res.status(404).json({success: false, message: 'File non trovato'});
-  fs.unlinkSync(filePath);
-  res.json({success: true, message: 'Modello globale eliminato'});
-});
 
 // ========== UPLOAD MODELLO IMPORTATO ==========
 app.post('/api/upload-model', modelUpload.single('modelFile'), async (req, res) => {

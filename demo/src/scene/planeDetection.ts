@@ -30,7 +30,7 @@ import {
 import {log} from '../logger';
 
 // ——— Configuration ———
-const MIN_AREA = 0.04; // m² — small enough for tables, large enough to reject noise
+const MIN_AREA = 0.06; // m² — small enough for tables, large enough to reject noise
 const MIN_VERTICES = 3; // accept triangles
 const MAX_PLANES = 50; // increased for better coverage
 const OCCLUDER_Z_OFFSET = 4; // depth bias so objects sitting on a surface win the depth test
@@ -378,10 +378,10 @@ export function setupPlaneDetection(config: {
     }
 
     // Only show visual overlays for floor + wall planes (not elevated surfaces like tables)
-    if (classification === 'elevated') {
-      vis.isVisible = false;
-      edge.isVisible = false;
-    }
+    // if (classification === 'elevated') {
+    //   vis.isVisible = false;
+    //   edge.isVisible = false;
+    // }
 
     return {visualMesh: vis, edgeMesh: edge, occluder: occ, orientation, classification, area};
   }
@@ -391,12 +391,24 @@ export function setupPlaneDetection(config: {
     planes.forEach((p) => {
       if (p.orientation === 'vertical') return;
       const y = p.visualMesh.position.y;
+      
+      const mat = p.visualMesh.material as StandardMaterial;
+      const edgeMat = p.edgeMesh as Mesh;
+
       if (Number.isFinite(floorY) && y > floorY + FLOOR_ELEVATION_THRESHOLD) {
-        p.classification = 'elevated';
-        if (!p.visualMesh.isDisposed()) p.visualMesh.isVisible = false;
-        if (!p.edgeMesh.isDisposed()) p.edgeMesh.isVisible = false;
+        p.classification = 'elevated'; // Questo è un tavolo/sedia
+        // Mantiene visibile il tavolo, ma lo colora di arancione/giallo per distinguerlo dal pavimento
+        if (mat) mat.diffuseColor = new Color3(0.9, 0.6, 0.1); 
+        if (edgeMat && edgeMat.color) edgeMat.color = new Color3(1.0, 0.7, 0.2);
+        
+        if (!p.visualMesh.isDisposed()) p.visualMesh.isVisible = true;
+        if (!p.edgeMesh.isDisposed()) p.edgeMesh.isVisible = true;
       } else {
-        p.classification = 'floor';
+        p.classification = 'floor'; // Questo è il pavimento
+        // Colore verde per il pavimento
+        if (mat) mat.diffuseColor = new Color3(0.0, 0.8, 0.5);
+        if (edgeMat && edgeMat.color) edgeMat.color = new Color3(0.0, 1.0, 0.7);
+        
         if (!p.visualMesh.isDisposed()) p.visualMesh.isVisible = true;
         if (!p.edgeMesh.isDisposed()) p.edgeMesh.isVisible = true;
       }

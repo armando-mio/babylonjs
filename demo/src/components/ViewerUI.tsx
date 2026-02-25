@@ -27,6 +27,7 @@ interface ViewerUIProps {
   status: string;
   trackingState: WebXRTrackingState | undefined;
   loadingModel: boolean;
+  isPlacing: boolean;
   modelLoaded: boolean;
   sceneReady: boolean;
   surfaceDetected: boolean;
@@ -68,6 +69,7 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
   status,
   trackingState,
   loadingModel,
+  isPlacing,
   modelLoaded,
   sceneReady,
   surfaceDetected,
@@ -105,6 +107,19 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
 
   // Logica apertura Aspetto
   const handleToggleTexture = () => {
+    // In 3D mode there is no pickable selection — use the model root directly
+    if (viewerMode === '3D') {
+      if (!modelRootRef.current) {
+        Alert.alert('Nessun modello', 'Nessun modello caricato.');
+        return;
+      }
+      refreshMeshList(modelRootRef.current);
+      setManipProperty(null);
+      setShowTexturePanel((prev: boolean) => !prev);
+      setActivePresetIndex(null);
+      return;
+    }
+
     // Require a selected instance before allowing texture/material edits
     if (!selectedInstance) {
       Alert.alert('Nessuna selezione', 'Seleziona prima un oggetto per modificare texture o materiale.');
@@ -219,25 +234,29 @@ export const ViewerUI: React.FC<ViewerUIProps> = ({
 
             {xrSession && (
               <TouchableOpacity 
-                style={[styles.createBtn, !placementOk && styles.createBtnDisabled]} 
+                style={[styles.createBtn, (!placementOk || isPlacing) && styles.createBtnDisabled]} 
                 onPress={createAtCenter}
-                disabled={!placementOk}>
-                <Text style={{color: placementOk ? '#fff' : '#666', fontSize: 28, fontWeight: '700'}}>+</Text>
+                disabled={!placementOk || isPlacing}>
+                {isPlacing
+                  ? <ActivityIndicator size="small" color="#22c55e" />
+                  : <Text style={{color: placementOk ? '#fff' : '#666', fontSize: 28, fontWeight: '700'}}>+</Text>
+                }
               </TouchableOpacity>
             )}
           </View>
 
           {/* Gruppo Destra: Solo Aspetto (texture/materiale) */}
           <View style={styles.actionGroup}>
+            {/* In 3D mode the button is always active (no tap-to-select). In AR/VR it requires a selected instance. */}
             <TouchableOpacity
               style={[
-                styles.iconBtn, 
+                styles.iconBtn,
                 showTexturePanel && styles.iconBtnActive,
-                !selectedInstance && styles.iconBtnDisabled,
+                (viewerMode !== '3D' && !selectedInstance) && styles.iconBtnDisabled,
               ]}
               onPress={handleToggleTexture}
-              disabled={!selectedInstance}>
-              <Palette color={showTexturePanel ? "#3b82f6" : (selectedInstance ? "#fff" : "#71717a")} size={24} />
+              disabled={viewerMode !== '3D' && !selectedInstance}>
+              <Palette color={showTexturePanel ? "#3b82f6" : ((viewerMode === '3D' || selectedInstance) ? "#fff" : "#71717a")} size={24} />
             </TouchableOpacity>
 
             {/* Delete selected instance - visible only when an instance is selected */}
