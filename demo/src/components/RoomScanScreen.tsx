@@ -303,10 +303,8 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
   if (scanning) {
     return (
       <View style={scanStyles.container}>
-        <RoomPlanView style={StyleSheet.absoluteFill} {...viewProps} />
-
-        {/* Controlli sovrapposti */}
-        <SafeAreaView style={scanStyles.overlayControls}>
+        {/* Top Bar sovrapposta (badge rosso di registrazione in alto) */}
+        <SafeAreaView style={scanStyles.overlayTopBar} pointerEvents="box-none">
           <View style={scanStyles.topBar}>
             <View style={{flex: 1}} />
             <View style={scanStyles.statusBadge}>
@@ -315,7 +313,15 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
             </View>
             <View style={{flex: 1}} />
           </View>
+        </SafeAreaView>
 
+        {/* Anteprima della fotocamera 3D (occupa tutto lo spazio alto) */}
+        <View style={{flex: 1}}>
+          <RoomPlanView style={StyleSheet.absoluteFill} {...viewProps} />
+        </View>
+
+        {/* Sezione dei bottoni IN BASSO (sotto l'anteprima, non più sovrapposti) */}
+        <SafeAreaView style={scanStyles.bottomControlsContainer}>
           <View style={scanStyles.bottomCenterButtons}>
             <TouchableOpacity
               style={scanStyles.cancelBtn}
@@ -326,7 +332,8 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
             <TouchableOpacity
               style={scanStyles.finishBtn}
               onPress={finishScan}>
-              <Text style={scanStyles.finishBtnText}>Finisci</Text>
+              {/* Qui abbiamo cambiato il testo in "Esporta" */}
+              <Text style={scanStyles.finishBtnText}>Esporta</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -440,9 +447,21 @@ const scanStyles = StyleSheet.create({
   },
 
   // Overlay durante la scansione
-  overlayControls: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'space-between',
+  // Overlay top bar in cima
+  overlayTopBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+  },
+  // Contenitore solido nero per i bottoni sotto l'anteprima
+  bottomControlsContainer: {
+    backgroundColor: '#09090b', // Sfondo scuro separato
+    borderTopWidth: 1,
+    borderTopColor: '#27272a',
+    paddingTop: 16,
+    paddingBottom: Platform.OS === 'ios' ? 0 : 16,
   },
   topBar: {
     flexDirection: 'row',
@@ -513,7 +532,6 @@ const scanStyles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: 16,
-    paddingBottom: 50,
   },
 
   // Risultato scansione

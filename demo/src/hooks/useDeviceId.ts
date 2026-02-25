@@ -1,9 +1,9 @@
-import {useEffect, useState} from 'react';
-import * as FileSystem from 'expo-file-system';
+import { useEffect, useState } from 'react';
+import * as SecureStore from 'expo-secure-store';
 
-const DEVICE_ID_FILE = `${FileSystem.documentDirectory}device_id.json`;
+const DEVICE_ID_KEY = 'my_app_persistent_device_id';
 
-/** Genera un UUID v4 semplice */
+// Funzione che genera un UUID casuale
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
     const r = (Math.random() * 16) | 0;
@@ -12,23 +12,27 @@ function generateUUID(): string {
   });
 }
 
-/** Restituisce un deviceId persistente, generato al primo avvio */
 export async function getDeviceId(): Promise<string> {
-  try {
-    const info = await FileSystem.getInfoAsync(DEVICE_ID_FILE);
-    if (info.exists) {
-      const content = await FileSystem.readAsStringAsync(DEVICE_ID_FILE);
-      const data = JSON.parse(content);
-      if (data.deviceId) return data.deviceId;
-    }
-  } catch (_) {}
+  // In modalità sviluppo locale usa sempre lo stesso per comodità
+  if (__DEV__) return 'iPhone-Armando-Dev';
 
-  const deviceId = generateUUID();
-  await FileSystem.writeAsStringAsync(DEVICE_ID_FILE, JSON.stringify({deviceId}));
-  return deviceId;
+  try {
+    // 1. Prova a leggere l'ID dal portachiavi di sistema (sopravvive agli aggiornamenti)
+    let deviceId = await SecureStore.getItemAsync(DEVICE_ID_KEY);
+    
+    // 2. Se non esiste, crealo e salvalo in cassaforte
+    if (!deviceId) {
+      deviceId = generateUUID();
+      await SecureStore.setItemAsync(DEVICE_ID_KEY, deviceId);
+    }
+    
+    return deviceId;
+  } catch (error) {
+    console.warn('Errore SecureStore:', error);
+    return 'unknown-device';
+  }
 }
 
-/** Hook React per ottenere il deviceId */
 export function useDeviceId(): string | null {
   const [deviceId, setDeviceId] = useState<string | null>(null);
 

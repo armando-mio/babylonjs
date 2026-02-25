@@ -29,7 +29,9 @@
     "react-native-sensors": "^7.3.6",
     "react-native-svg": "^13.9.0",
     "rxjs": "^7.8.2",
-    "suncalc": "^1.9.0"
+    "suncalc": "^1.9.0",
+    "expo-application": "~5.1.1",
+    "expo-secure-store": "~12.1.1"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",
