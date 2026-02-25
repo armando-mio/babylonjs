@@ -1,0 +1,140 @@
+diff --git a/node_modules/expo-roomplan/android/build.gradle b/node_modules/expo-roomplan/android/build.gradle
+deleted file mode 100644
+index af07ef4..0000000
+--- a/node_modules/expo-roomplan/android/build.gradle
++++ /dev/null
+@@ -1,43 +0,0 @@
+-apply plugin: 'com.android.library'
+-
+-group = 'expo.modules.roomplan'
+-version = '1.0.2'
+-
+-def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+-apply from: expoModulesCorePlugin
+-applyKotlinExpoModulesCorePlugin()
+-useCoreDependencies()
+-useExpoPublishing()
+-
+-// If you want to use the managed Android SDK versions from expo-modules-core, set this to true.
+-// The Android SDK versions will be bumped from time to time in SDK releases and may introduce breaking changes in your module code.
+-// Most of the time, you may like to manage the Android SDK versions yourself.
+-def useManagedAndroidSdkVersions = false
+-if (useManagedAndroidSdkVersions) {
+-  useDefaultAndroidSdkVersions()
+-} else {
+-  buildscript {
+-    // Simple helper that allows the root project to override versions declared by this library.
+-    ext.safeExtGet = { prop, fallback ->
+-      rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+-    }
+-  }
+-  project.android {
+-    compileSdkVersion safeExtGet("compileSdkVersion", 34)
+-    defaultConfig {
+-      minSdkVersion safeExtGet("minSdkVersion", 21)
+-      targetSdkVersion safeExtGet("targetSdkVersion", 34)
+-    }
+-  }
+-}
+-
+-android {
+-  namespace "expo.modules.roomplan"
+-  defaultConfig {
+-    versionCode 1
+-    versionName "1.0.2"
+-  }
+-  lintOptions {
+-    abortOnError false
+-  }
+-}
+diff --git a/node_modules/expo-roomplan/android/src/main/AndroidManifest.xml b/node_modules/expo-roomplan/android/src/main/AndroidManifest.xml
+deleted file mode 100644
+index bdae66c..0000000
+--- a/node_modules/expo-roomplan/android/src/main/AndroidManifest.xml
++++ /dev/null
+@@ -1,2 +0,0 @@
+-<manifest>
+-</manifest>
+diff --git a/node_modules/expo-roomplan/android/src/main/java/expo/modules/roomplan/ExpoRoomPlanModule.kt b/node_modules/expo-roomplan/android/src/main/java/expo/modules/roomplan/ExpoRoomPlanModule.kt
+deleted file mode 100644
+index 38ebff6..0000000
+--- a/node_modules/expo-roomplan/android/src/main/java/expo/modules/roomplan/ExpoRoomPlanModule.kt
++++ /dev/null
+@@ -1,24 +0,0 @@
+-package expo.modules.roomplan
+-
+-import expo.modules.kotlin.modules.Module
+-import expo.modules.kotlin.modules.ModuleDefinition
+-import expo.modules.kotlin.Promise
+-import expo.modules.kotlin.events.EventEmitter
+-
+-class ExpoRoomPlanModule : Module() {
+-  
+-  override fun definition() = ModuleDefinition {
+-    // Module name - should match your TypeScript module name
+-    Name("ExpoRoomPlan")
+-
+-    // Async function to start capture
+-    AsyncFunction("startCapture") { scanName: String, exportType: String, sendFileLoc: Boolean, promise: Promise ->
+-      promise.reject("NOT_IMPLEMENTED", "RoomPlan SDK is not available on Android.", null)
+-    }
+-
+-    // Async function to stop capture
+-    AsyncFunction("stopCapture") { promise: Promise ->
+-      promise.reject("NOT_IMPLEMENTED", "RoomPlan SDK is not available on Android.", null)
+-    }
+-  }
+-}
+\ No newline at end of file
+diff --git a/node_modules/expo-roomplan/android/src/main/java/expo/modules/roomplan/ExpoRoomPlanViewModule.kt b/node_modules/expo-roomplan/android/src/main/java/expo/modules/roomplan/ExpoRoomPlanViewModule.kt
+deleted file mode 100644
+index 4ba96bd..0000000
+--- a/node_modules/expo-roomplan/android/src/main/java/expo/modules/roomplan/ExpoRoomPlanViewModule.kt
++++ /dev/null
+@@ -1,23 +0,0 @@
+-package expo.modules.roomplan
+-
+-import expo.modules.kotlin.modules.Module
+-import expo.modules.kotlin.modules.ModuleDefinition
+-
+-class ExpoRoomPlanViewModule : Module() {
+-  override fun definition() = ModuleDefinition {
+-    // Name must match the iOS view module so JS can require the same manager
+-    Name("ExpoRoomPlanView")
+-
+-    // Register a View factory. The View itself will throw on Android.
+-    View(::RoomPlanView) {
+-      // Mirror props to satisfy the JS/TS surface. They are no-ops here.
+-      Prop("scanName") { _: RoomPlanView, _: String? -> }
+-      Prop("exportType") { _: RoomPlanView, _: String? -> }
+-      Prop("sendFileLoc") { _: RoomPlanView, _: Boolean? -> }
+-      Prop("running") { _: RoomPlanView, _: Boolean? -> }
+-      Prop("exportTrigger") { _: RoomPlanView, _: Double? -> }
+-
+-      Events("onStatus", "onExported")
+-    }
+-  }
+-}
+diff --git a/node_modules/expo-roomplan/android/src/main/java/expo/modules/roomplan/RoomPlanView.kt b/node_modules/expo-roomplan/android/src/main/java/expo/modules/roomplan/RoomPlanView.kt
+deleted file mode 100644
+index 8809a54..0000000
+--- a/node_modules/expo-roomplan/android/src/main/java/expo/modules/roomplan/RoomPlanView.kt
++++ /dev/null
+@@ -1,17 +0,0 @@
+-package expo.modules.roomplan
+-
+-import android.content.Context
+-import android.util.AttributeSet
+-import android.widget.FrameLayout
+-
+-class RoomPlanView @JvmOverloads constructor(
+-  context: Context,
+-  attrs: AttributeSet? = null,
+-  defStyleAttr: Int = 0
+-) : FrameLayout(context, attrs, defStyleAttr) {
+-
+-  init {
+-    // Fail fast: RoomPlan is iOS-only.
+-    throw UnsupportedOperationException("RoomPlan SDK is not available on Android.")
+-  }
+-}

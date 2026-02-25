@@ -9,10 +9,24 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
-import {RoomPlanView, ExportType, useRoomPlanView} from 'expo-roomplan';
 import {ROOM_SCAN_SERVER_URL} from '../constants';
 import {log} from '../logger';
 import {useDeviceId} from '../hooks/useDeviceId';
+
+let RoomPlanView: any = () => null;
+let ExportType: any = { Mesh: 0 }; 
+let useRoomPlanView: any = () => ({
+  viewProps: {},
+  controls: { start: () => {}, cancel: () => {}, finishScan: () => {} },
+  state: { status: 'Idle' }
+});
+
+if (Platform.OS === 'ios') {
+  const roomplan = require('expo-roomplan');
+  RoomPlanView = roomplan.RoomPlanView;
+  ExportType = roomplan.ExportType;
+  useRoomPlanView = roomplan.useRoomPlanView;
+}
 
 // Controlla se il dispositivo ha il LiDAR
 // Solo iPhone 12 Pro+, iPad Pro M1+ hanno il LiDAR
@@ -119,6 +133,8 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
   const [saving, setSaving] = useState(false);
   const deviceId = useDeviceId();
 
+  const hasLiDAR = Platform.OS === 'ios';
+
   // File paths ricevuti dall'export
   const scanUrlRef = useRef<string | null>(null);
   const jsonUrlRef = useRef<string | null>(null);
@@ -128,51 +144,45 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
   const savedScanPathRef = useRef<string | null>(null);
   const savedJsonPathRef = useRef<string | null>(null);
 
-  const {viewProps, controls, state} = useRoomPlanView({
-    scanName: scanNameRef.current,
-    exportType: ExportType.Mesh,
-    exportOnFinish: true,
-    sendFileLoc: true,
-    autoCloseOnTerminalStatus: false,
-    onStatus: e => {
-      log('INFO', `RoomPlan status: ${JSON.stringify(e.nativeEvent)}`);
-    },
-    onPreview: () => {
-      log('INFO', 'RoomPlan: preview mostrata');
-    },
-    onExported: async e => {
-      log('INFO', `RoomPlan exported: ${JSON.stringify(e.nativeEvent)}`);
-      const {scanUrl, jsonUrl} = e.nativeEvent;
+  // === GESTIONE ANTI-CRASH PER ANDROID ===
+  // Inizializziamo un oggetto "vuoto" per Android in modo da non far esplodere i destructuring
+  let roomPlanHook: any = { 
+    viewProps: {}, 
+    controls: { start: () => {}, cancel: () => {}, finishScan: () => {} }, 
+    state: { status: 'Idle' } 
+  };
 
-      // Salva i path dei file esportati
-      // expo-roomplan con sendFileLoc:true restituisce i path dei file
-      // che sono nella directory dell'app (Documents), non in tmp
-      if (scanUrl) {
-        savedScanPathRef.current = scanUrl;
-        scanUrlRef.current = scanUrl;
-        log('INFO', `USDZ salvato in: ${cleanPath(scanUrl)}`);
-      }
+  if (hasLiDAR) {
+    // Disabilitiamo il controllo di React per questa riga, perché hasLiDAR 
+    // non cambia mai a runtime, quindi è sicuro usare l'hook qui senza violare la stabilità.
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    roomPlanHook = useRoomPlanView({
+      scanName: scanNameRef.current,
+      exportType: ExportType.Mesh,
+      exportOnFinish: true,
+      sendFileLoc: true,
+      autoCloseOnTerminalStatus: false,
+      onStatus: (e: any) => log('INFO', `RoomPlan status: ${JSON.stringify(e.nativeEvent)}`),
+      onPreview: () => log('INFO', 'RoomPlan: preview mostrata'),
+      onExported: async (e: any) => {
+        log('INFO', `RoomPlan exported: ${JSON.stringify(e.nativeEvent)}`);
+        const {scanUrl, jsonUrl} = e.nativeEvent;
+        
+        if (scanUrl) { savedScanPathRef.current = scanUrl; scanUrlRef.current = scanUrl; }
+        if (jsonUrl) { savedJsonPathRef.current = jsonUrl; jsonUrlRef.current = jsonUrl; }
+        
+        // Timeout per evitare crash di ARKit spegnendo dolcemente la sessione
+        setTimeout(() => { setScanComplete(true); setScanning(false); }, 800);
+      },
+    });
+  }
 
-      if (jsonUrl) {
-        savedJsonPathRef.current = jsonUrl;
-        jsonUrlRef.current = jsonUrl;
-        log('INFO', `JSON salvato in: ${cleanPath(jsonUrl)}`);
-      }
-
-      log('INFO', 'Scansione completata. Spegnimento sensori...');
-      
-      // FIX ARKit CRASH: Diamo tempo al sistema di spegnere l'ARSession
-      setTimeout(() => {
-        setScanComplete(true);
-        setScanning(false);
-      }, 800);
-    },
-  });
+  // Estraiamo i valori (reali su iOS, vuoti su Android)
+  const {viewProps, controls, state} = roomPlanHook;
 
   // Quando lo stato cambia a terminal (OK, Error, Canceled) e non scanning
   useEffect(() => {
     if (state.status === 'Canceled' && scanning) {
-      // FIX ARKit CRASH
       setTimeout(() => {
         setScanning(false);
       }, 800);
@@ -194,12 +204,11 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
     // 2. Aspettiamo che la grafica sia pronta prima di avviare il motore di scansione
     setTimeout(() => {
       controls.start();
-    }, 500); // Mezzo secondo di respiro
+    }, 500); 
   }, [controls]);
 
   const cancelScan = useCallback(() => {
     controls.cancel();
-    // FIX ARKit CRASH
     setTimeout(() => {
       setScanning(false);
       setScanComplete(false);
@@ -284,7 +293,6 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
             style: 'destructive',
             onPress: () => {
               controls.cancel();
-              // FIX ARKit CRASH
               setTimeout(() => {
                 setScanning(false);
                 setScanComplete(false);
@@ -317,7 +325,7 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
 
         {/* Anteprima della fotocamera 3D (occupa tutto lo spazio alto) */}
         <View style={{flex: 1}}>
-          <RoomPlanView style={StyleSheet.absoluteFill} {...viewProps} />
+          {hasLiDAR && <RoomPlanView style={StyleSheet.absoluteFill} {...viewProps} />}
         </View>
 
         {/* Sezione dei bottoni IN BASSO (sotto l'anteprima, non più sovrapposti) */}
@@ -332,7 +340,6 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
             <TouchableOpacity
               style={scanStyles.finishBtn}
               onPress={finishScan}>
-              {/* Qui abbiamo cambiato il testo in "Esporta" */}
               <Text style={scanStyles.finishBtnText}>Esporta</Text>
             </TouchableOpacity>
           </View>
@@ -382,8 +389,6 @@ export const RoomScanScreen: React.FC<RoomScanScreenProps> = ({onGoBack}) => {
   }
 
   // ========== RENDER: Stato iniziale ==========
-  const hasLiDAR = Platform.OS === 'ios'; // Solo dispositivi iOS supportano RoomPlan/LiDAR
-
   return (
     <SafeAreaView style={scanStyles.container}>
       <View style={scanStyles.initialContainer}>
@@ -445,8 +450,7 @@ const scanStyles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#09090b',
   },
-
-  // Overlay durante la scansione
+  
   // Overlay top bar in cima
   overlayTopBar: {
     position: 'absolute',
@@ -455,14 +459,16 @@ const scanStyles = StyleSheet.create({
     right: 0,
     zIndex: 10,
   },
+  
   // Contenitore solido nero per i bottoni sotto l'anteprima
   bottomControlsContainer: {
-    backgroundColor: '#09090b', // Sfondo scuro separato
+    backgroundColor: '#09090b', 
     borderTopWidth: 1,
     borderTopColor: '#27272a',
     paddingTop: 16,
     paddingBottom: Platform.OS === 'ios' ? 0 : 16,
   },
+  
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -512,28 +518,13 @@ const scanStyles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 14,
   },
-  addRoomContainer: {
-    alignItems: 'center',
-    paddingBottom: 40,
-  },
-  addRoomBtn: {
-    backgroundColor: 'rgba(59, 130, 246, 0.9)',
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 16,
-  },
-  addRoomBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 16,
-  },
   bottomCenterButtons: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     gap: 16,
   },
-
+  
   // Risultato scansione
   resultContainer: {
     flex: 1,
@@ -560,57 +551,12 @@ const scanStyles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
-  fileInfo: {
-    backgroundColor: '#18181b',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: '#27272a',
-  },
-  fileInfoTitle: {
-    color: '#a1a1aa',
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 12,
-  },
-  fileRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#27272a',
-  },
-  fileIcon: {
-    fontSize: 20,
-  },
-  fileName: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '500',
-    flex: 1,
-  },
-
+  
   // Pulsanti azione
   actionButtons: {
     flexDirection: 'row',
     gap: 12,
     marginBottom: 24,
-  },
-  saveBtn: {
-    flex: 1,
-    backgroundColor: 'rgba(34, 197, 94, 0.15)',
-    paddingVertical: 16,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 8,
-    borderWidth: 1,
-    borderColor: '#22c55e',
   },
   uploadBtn: {
     flex: 1,
@@ -624,31 +570,15 @@ const scanStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#3b82f6',
   },
-  actionIcon: {
-    fontSize: 20,
-  },
   actionBtnText: {
     color: '#fff',
     fontSize: 14,
     fontWeight: '700',
   },
-
+  
   // Bottom actions
   bottomActions: {
     gap: 12,
-  },
-  newScanBtn: {
-    backgroundColor: 'rgba(168, 85, 247, 0.15)',
-    paddingVertical: 16,
-    borderRadius: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#a855f7',
-  },
-  newScanBtnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
   },
   exitBtn: {
     paddingVertical: 14,
@@ -659,7 +589,7 @@ const scanStyles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
-
+  
   // Stato iniziale
   initialContainer: {
     flex: 1,
@@ -693,10 +623,6 @@ const scanStyles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 32,
-  },
-  initialIcon: {
-    fontSize: 80,
-    marginBottom: 24,
   },
   initialHeading: {
     fontSize: 26,

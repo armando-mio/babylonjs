@@ -175,6 +175,9 @@ app.post(
 app.get('/api/scans', (req, res) => {
   try {
     const scans = [];
+    
+    // Leggiamo l'ID del telefono che sta facendo la richiesta (se presente)
+    const requestedDeviceId = req.query.deviceId;
 
     // 1. Modelli caricati/scansionati dagli utenti
     if (fs.existsSync(UPLOADS_DIR)) {
@@ -189,35 +192,42 @@ app.get('/api/scans', (req, res) => {
           try { metadata = JSON.parse(fs.readFileSync(path.join(dirPath, 'metadata.json'), 'utf-8')); } catch (e) {}
         }
 
-        const files = fs.readdirSync(dirPath).filter(f => f !== 'metadata.json');
-        const fileDetails = files.map(f => {
-          const stats = fs.statSync(path.join(dirPath, f));
-          let type = path.extname(f).replace('.', '');
-          if(f === 'debug.log') type = 'log';
-          return { name: f, size: stats.size, type: type, createdAt: stats.birthtime.toISOString() };
-        });
+        const modelDeviceId = metadata?.deviceId || 'SCONOSCIUTO';
 
-        scans.push({
-          scanName: dirName,
-          timestamp: metadata?.timestamp || fs.statSync(dirPath).birthtime.toISOString(),
-          displayName: metadata?.displayName || null,
-          description: metadata?.description || null,
-          source: metadata?.source || 'scan',
-          deviceId: metadata?.deviceId || 'SCONOSCIUTO',
-          files: fileDetails,
-          isHardcoded: false
-        });
+        // --- FILTRO PRIVACY INTELLIGENTE ---
+        // Se requestedDeviceId NON c'è (es. la dashboard web), la condizione !requestedDeviceId è VERA e mostra tutto.
+        // Se c'è (es. l'app), verifica che i due ID combacino.
+        if (!requestedDeviceId || modelDeviceId === requestedDeviceId) {
+          const files = fs.readdirSync(dirPath).filter(f => f !== 'metadata.json');
+          const fileDetails = files.map(f => {
+            const stats = fs.statSync(path.join(dirPath, f));
+            let type = path.extname(f).replace('.', '');
+            if(f === 'debug.log') type = 'log';
+            return { name: f, size: stats.size, type: type, createdAt: stats.birthtime.toISOString() };
+          });
+
+          scans.push({
+            scanName: dirName,
+            timestamp: metadata?.timestamp || fs.statSync(dirPath).birthtime.toISOString(),
+            displayName: metadata?.displayName || null,
+            description: metadata?.description || null,
+            source: metadata?.source || 'scan',
+            deviceId: modelDeviceId,
+            files: fileDetails,
+            isHardcoded: false
+          });
+        }
       });
     }
 
-    // 2. Modelli globali (Hardcoded)
+    // 2. Modelli globali (Hardcoded) - Aggiunti SEMPRE, per tutti
     if (fs.existsSync(HARDCODED_DIR)) {
       const hardcodedFiles = fs.readdirSync(HARDCODED_DIR).filter(f => f.toLowerCase().endsWith('.glb'));
       hardcodedFiles.forEach(fileName => {
         const filePath = path.join(HARDCODED_DIR, fileName);
         const stats = fs.statSync(filePath);
         scans.push({
-          scanName: fileName, // il nome del file fa da ID
+          scanName: fileName,
           timestamp: stats.birthtime.toISOString(),
           displayName: fileName,
           source: 'hardcoded',

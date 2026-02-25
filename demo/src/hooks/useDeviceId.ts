@@ -13,9 +13,6 @@ function generateUUID(): string {
 }
 
 export async function getDeviceId(): Promise<string> {
-  // In modalità sviluppo locale usa sempre lo stesso per comodità
-  if (__DEV__) return 'iPhone-Armando-Dev';
-
   try {
     // 1. Prova a leggere l'ID dal portachiavi di sistema (sopravvive agli aggiornamenti)
     let deviceId = await SecureStore.getItemAsync(DEVICE_ID_KEY);

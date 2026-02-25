@@ -27,3 +27,6 @@ Thumbs.db
 # Babylon.js specific
 babylon.js.map
 babylon.d.ts.map
+
+# Expo specific
+.expo
