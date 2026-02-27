@@ -11,7 +11,7 @@ export const {width: SCREEN_WIDTH} = Dimensions.get('window');
 export const CARD_WIDTH = (SCREEN_WIDTH - 48) / 2;
 
 // ================= ROOM SCAN SERVER =================
-export const ROOM_SCAN_SERVER_URL = 'https://morton-multiangular-maxim.ngrok-free.dev';
+export const ROOM_SCAN_SERVER_URL = 'https://natashia-unimmunised-nonrepresentatively.ngrok-free.dev';
 
 // ================= SOLAR POSITION =================
 export const SUN_SPHERE_DISTANCE = 8;
