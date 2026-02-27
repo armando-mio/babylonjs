@@ -72,18 +72,24 @@ export function createSunSphere(
 
   // Ombre: disabilita se il sole è troppo basso o sotto l'orizzonte
   if (shadowGen) {
-    if (!sunPos.isAboveHorizon || sunPos.altitude < MIN_SHADOW_ALTITUDE_RAD) {
+
+    // --- INIZIO TEST: Forza le ombre a essere sempre visibili ---
+    shadowGen.setDarkness(0.6); 
+    log('INFO', 'TEST: Ombre forzate attive ignorando il tramonto');
+    // --- FINE TEST ---
+    
+    // if (!sunPos.isAboveHorizon || sunPos.altitude < MIN_SHADOW_ALTITUDE_RAD) {
       // Sole sotto orizzonte o troppo basso → niente ombre
-      shadowGen.setDarkness(1); // darkness=1 → ombra invisibile
-      log('INFO', 'Ombre disabilitate: sole troppo basso');
-    } else {
+    //   shadowGen.setDarkness(1); // darkness=1 → ombra invisibile
+    //   log('INFO', 'Ombre disabilitate: sole troppo basso');
+    // } else {
       // Graduale: ombre più leggere quando il sole è basso (10°-30°)
-      const maxAlt = 30 * (Math.PI / 180);
-      const t = Math.min((sunPos.altitude - MIN_SHADOW_ALTITUDE_RAD) / (maxAlt - MIN_SHADOW_ALTITUDE_RAD), 1);
-      const darkness = 0.6 + (1 - t) * 0.3; // 0.6 (sole alto) → 0.9 (sole basso)
-      shadowGen.setDarkness(darkness);
-      log('INFO', `Ombre attive: darkness=${darkness.toFixed(2)}`);
-    }
+    //   const maxAlt = 30 * (Math.PI / 180);
+    //   const t = Math.min((sunPos.altitude - MIN_SHADOW_ALTITUDE_RAD) / (maxAlt - MIN_SHADOW_ALTITUDE_RAD), 1);
+    //   const darkness = 0.6 + (1 - t) * 0.3; // 0.6 (sole alto) → 0.9 (sole basso)
+    //   shadowGen.setDarkness(darkness);
+    //   log('INFO', `Ombre attive: darkness=${darkness.toFixed(2)}`);
+    // }
   }
 
   const azDeg = (sunPos.azimuth * 180 / Math.PI).toFixed(1);

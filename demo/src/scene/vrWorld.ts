@@ -27,18 +27,21 @@ export function createVRWorld(scene: Scene): Mesh {
   skyDome.isPickable = false;
   skyDome.renderingGroupId = 0;
 
-  // Ground (reuse shadowGround)
+  // --- Pavimento dedicato solo alla VR (Scollegato dall'AR) ---
+  const vrGround = MeshBuilder.CreateGround('vrGround', {width: 50, height: 50}, scene);
+  vrGround.position.y = GROUND_Y;
+  vrGround.receiveShadows = true;
+  
+  const mat = new StandardMaterial('vrGroundMat', scene);
+  mat.diffuseColor = new Color3(0.3, 0.6, 0.25);
+  mat.specularColor = new Color3(0.05, 0.05, 0.05);
+  vrGround.material = mat;
+  vrGround.renderingGroupId = 1;
+
+  // Nascondiamo il pavimento invisibile dell'AR per non creare conflitti in VR
   const sg = scene.getMeshByName('shadowGround');
   if (sg) {
-    sg.receiveShadows = true;
-    const mat = sg.material as StandardMaterial;
-    if (mat) {
-      mat.diffuseColor = new Color3(0.3, 0.6, 0.25);
-      mat.specularColor = new Color3(0.05, 0.05, 0.05);
-      mat.alpha = 1;
-    }
-    sg.isVisible = true;
-    sg.renderingGroupId = 1;
+    sg.isVisible = false;
   }
 
   // VR grid
