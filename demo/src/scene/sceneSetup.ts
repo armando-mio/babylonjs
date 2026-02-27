@@ -4,6 +4,8 @@ import {
   StandardMaterial, TransformNode,
   ShadowGenerator, Camera, Mesh,
 } from '@babylonjs/core';
+import { Platform } from 'react-native';
+import { Constants, BackgroundMaterial } from '@babylonjs/core';
 import {log} from '../logger';
 import {GROUND_Y} from '../constants';
 import { ShadowOnlyMaterial } from '@babylonjs/materials';
@@ -76,15 +78,21 @@ export function createScene(engine: any): SceneSetupResult {
   );
   shadowGround.receiveShadows = true;
   
-  // --- USIAMO IL MATERIALE SPECIFICO PER L'AR ---
-  const shadowGroundMat = new ShadowOnlyMaterial('shadowGroundMat', newScene);
-  
-  // FONDAMENTALE: Diciamo al materiale qual è la luce che proietta l'ombra
-  shadowGroundMat.activeLight = dirLight; 
-  
-  // Con questo materiale, l'alpha regola l'intensità dell'ombra visibile
-  // (0.6 è un'ombra morbida, 1.0 è un'ombra nerissima)
-  shadowGroundMat.alpha = 0.6; 
+  let shadowGroundMat;
+
+  if (Platform.OS === 'android') {
+    // FIX ANDROID: Usiamo BackgroundMaterial nativo e Alpha Multiply
+    shadowGroundMat = new BackgroundMaterial('shadowGroundMat', newScene);
+    shadowGroundMat.shadowLevel = 0.6;
+    shadowGroundMat.useRGBColor = false;
+    shadowGroundMat.primaryColor = new Color3(0, 0, 0);
+    shadowGroundMat.alphaMode = Constants.ALPHA_MULTIPLY;
+  } else {
+    // IOS: Manteniamo il codice originale che funziona perfettamente
+    shadowGroundMat = new ShadowOnlyMaterial('shadowGroundMat', newScene);
+    shadowGroundMat.activeLight = dirLight; 
+    shadowGroundMat.alpha = 0.6; 
+  }
   
   shadowGround.material = shadowGroundMat;
   shadowGround.isPickable = false;

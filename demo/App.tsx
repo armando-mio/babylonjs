@@ -1,5 +1,6 @@
 import React, {useState, useEffect, useCallback, useRef} from 'react';
 import {Alert, BackHandler} from 'react-native';
+import { Platform } from 'react-native';
 import {useEngine} from '@babylonjs/react-native';
 import {
   Scene,
@@ -319,6 +320,8 @@ const App = () => {
         position.y - modelBottomY + 0.005, // +5mm above surface to prevent z-fighting with occluders
         position.z - modelCenterZ,
       );
+
+      addBlobShadow(instRoot, scn);
 
       (instRoot as any)._baseScale = pNormScale;
       (instRoot as any)._modelName = model.name; // Store source model name for cross-model textures
@@ -687,6 +690,8 @@ const App = () => {
       modelRoot.position = new Vector3(0, GROUND_Y, 0);
       modelRootRef.current = modelRoot;
 
+      addBlobShadow(modelRoot, scn);
+
       let result;
       if (model.url) {
         const lastSlash = model.url.lastIndexOf('/');
@@ -827,19 +832,32 @@ const App = () => {
       dirLightRef.current = dirLight;
 
       // Shadow generator
-      const shadowGen = new ShadowGenerator(2048, dirLight);
-      shadowGen.useBlurExponentialShadowMap = true;
-      shadowGen.blurKernel = 64;
-      shadowGen.darkness = 0.6;
-      shadowGen.bias = 0.005;
-      shadowGen.normalBias = 0.05;
-      shadowGen.depthScale = 50;
-      shadowGen.frustumEdgeFalloff = 1.0;
-      shadowGen.useKernelBlur = true;
-      shadowGen.blurScale = 2;
-      shadowGen.setDarkness(0.6);
-      shadowGen.transparencyShadow = true;
-      shadowGen.useContactHardeningShadow = false;
+      const shadowGen = new ShadowGenerator(Platform.OS === 'android' ? 1024 : 2048, dirLight);
+      
+      if (Platform.OS === 'android') {
+        // FIX ANDROID: Filtro PCF hardware e risoluzione dimezzata
+        shadowGen.usePercentageCloserFiltering = true;
+        shadowGen.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
+        shadowGen.darkness = 0.6;
+        shadowGen.bias = 0.002;
+        shadowGen.normalBias = 0.02;
+        shadowGen.transparencyShadow = true;
+      } else {
+        // IOS: Manteniamo il codice originale
+        shadowGen.useBlurExponentialShadowMap = true;
+        shadowGen.blurKernel = 64;
+        shadowGen.darkness = 0.6;
+        shadowGen.bias = 0.005;
+        shadowGen.normalBias = 0.05;
+        shadowGen.depthScale = 50;
+        shadowGen.frustumEdgeFalloff = 1.0;
+        shadowGen.useKernelBlur = true;
+        shadowGen.blurScale = 2;
+        shadowGen.setDarkness(0.6);
+        shadowGen.transparencyShadow = true;
+        shadowGen.useContactHardeningShadow = false;
+      }
+
       shadowGenRef.current = shadowGen;
       dirLight.shadowMinZ = 0.1;
       dirLight.shadowMaxZ = 40;
@@ -1388,14 +1406,21 @@ const App = () => {
       // AR shadow ground
       const sg = scene.getMeshByName('shadowGround');
       if (sg) {
-        sg.receiveShadows = true;
-        sg.position.y = Number.isFinite(arFloorYRef.current) ? arFloorYRef.current : 0;
-        const mat = sg.material as StandardMaterial;
-        if (mat) {
-          mat.diffuseColor = new Color3(0.5, 0.5, 0.5);
-          mat.specularColor = new Color3(0, 0, 0);
-          mat.alpha = 0.35;
-          mat.disableDepthWrite = true;
+        if (Platform.OS === 'android') {
+          // FIX ANDROID: ARCore rompe l'alpha. Nascondiamo il receiver e usiamo la Blob Shadow.
+          sg.isVisible = false; 
+        } else {
+          // IOS: Funziona perfettamente, lasciamo le ombre dinamiche
+          sg.isVisible = true;
+          sg.receiveShadows = true;
+          sg.position.y = Number.isFinite(arFloorYRef.current) ? arFloorYRef.current : 0;
+          const mat = sg.material as StandardMaterial;
+          if (mat) {
+            mat.diffuseColor = new Color3(0.5, 0.5, 0.5);
+            mat.specularColor = new Color3(0, 0, 0);
+            mat.alpha = 0.35;
+            mat.disableDepthWrite = true;
+          }
         }
       }
 
@@ -2267,5 +2292,50 @@ const App = () => {
     />
   );
 };
+
+function addBlobShadow(node: TransformNode, scene: Scene) {
+  if (Platform.OS !== 'android') return; // Su iOS usiamo le ombre vere
+
+  const size = 1.0; // Diametro dell'ombra (regolabile)
+  const plane = MeshBuilder.CreateGround(`blob_${node.name}`, {width: size, height: size}, scene);
+  plane.parent = node;
+  plane.position.y = 0.005; // Alzata di 5mm per evitare sfarfallii (z-fighting) col pavimento
+
+  // Creazione procedurale del gradiente radiale
+  const texSize = 128;
+  const data = new Uint8Array(texSize * texSize * 4);
+  const center = texSize / 2;
+  
+  for (let y = 0; y < texSize; y++) {
+    for (let x = 0; x < texSize; x++) {
+      const idx = (y * texSize + x) * 4;
+      const dist = Math.sqrt((x - center) ** 2 + (y - center) ** 2);
+      let alpha = 0;
+      if (dist < center) {
+        const t = dist / center;
+        alpha = (1 - t * t) * 255; // Sfumatura morbida verso i bordi
+      }
+      data[idx] = 0;     // R
+      data[idx+1] = 0;   // G
+      data[idx+2] = 0;   // B
+      data[idx+3] = Math.round(alpha * 0.7); // A (Max 70% di opacità)
+    }
+  }
+
+  const tex = RawTexture.CreateRGBATexture(data, texSize, texSize, scene, false, false, Texture.BILINEAR_SAMPLINGMODE);
+  tex.hasAlpha = true;
+
+  const mat = new StandardMaterial(`blobMat_${node.name}`, scene);
+  mat.diffuseTexture = tex;
+  mat.useAlphaFromDiffuseTexture = true;
+  mat.disableLighting = true; // Non reagisce alla luce del sole
+  mat.emissiveColor = new Color3(0, 0, 0);
+  mat.disableDepthWrite = true; // Fondamentale in AR
+  mat.backFaceCulling = false;
+
+  plane.material = mat;
+  plane.renderingGroupId = 1;
+  plane.isPickable = false;
+}
 
 export default App;
